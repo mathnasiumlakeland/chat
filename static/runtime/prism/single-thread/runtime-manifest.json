@@ -1,0 +1,16 @@
+{
+  "runtimeBridge": "asyncify",
+  "runtimePreset": "perf",
+  "paramUploadMode": "queue-write-buffer",
+  "ggmlWebgpuJspi": "OFF",
+  "asyncifyDiagnostics": "0",
+  "cpuProfile": "OFF",
+  "gpuProfile": "OFF",
+  "commandSubmitBatchSize": "64",
+  "numParamBuffers": "128",
+  "declareAsmModuleExports": "1",
+  "optimizationLevel": "-O3",
+  "exceptionFlag": "-fexceptions",
+  "patchVendorBundle": "0",
+  "builtAt": "2026-04-06T07:01:25Z"
+}
