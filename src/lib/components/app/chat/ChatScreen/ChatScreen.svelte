@@ -498,7 +498,7 @@
 	>
 		<div class="mt-4 w-full max-w-[48rem] px-4 md:mt-6">
 			<div class="mb-6 text-center" in:fade={{ duration: 300 }}>
-				<h1 class="text-2xl font-semibold tracking-tight md:text-3xl">
+				<h1 class="text-2xl font-normal tracking-tight md:text-3xl">
 					{emptyStatePrompt}
 				</h1>
 			</div>
