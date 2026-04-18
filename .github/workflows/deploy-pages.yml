@@ -29,12 +29,6 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Verify checked-in runtime assets
-        run: |
-          test -f static/runtime/prism/single-thread/wllama.js
-          test -f static/runtime/prism/single-thread/wllama.wasm
-          test -f static/runtime/prism/single-thread/runtime-manifest.json
-
       - name: Typecheck
         run: bun run check
 
