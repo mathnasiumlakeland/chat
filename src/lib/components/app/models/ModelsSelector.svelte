@@ -236,6 +236,7 @@
 
 		return undefined;
 	}
+
 </script>
 
 <div class={cn('relative inline-flex flex-col items-end gap-1', className)}>
@@ -291,7 +292,6 @@
 									<ModelId
 										modelId={selectedOption.model}
 										class="min-w-0 overflow-hidden"
-										showOrgName
 										{...props}
 									/>
 								{/snippet}
@@ -406,7 +406,6 @@
 								<ModelId
 									modelId={selectedOption.model}
 									class="min-w-0 overflow-hidden"
-									showOrgName
 									{...props}
 								/>
 							{/snippet}

@@ -44,6 +44,22 @@
 
 	let { showCenteredEmpty = false } = $props();
 
+	const EMPTY_STATE_PROMPTS = [
+		'What’s on your mind today?',
+		'What can I help with?',
+		'What’s on the agenda today?',
+		'What are you working on?',
+		'How can I help you today?',
+		'What can I help you with today?',
+		'What are you researching?',
+		'What are you working towards?',
+		'Ready when you are.'
+	] as const;
+
+	function pickRandomEmptyStatePrompt() {
+		return EMPTY_STATE_PROMPTS[Math.floor(Math.random() * EMPTY_STATE_PROMPTS.length)];
+	}
+
 	let disableAutoScroll = $derived(Boolean(config().disableAutoScroll));
 	let chatScrollContainer: HTMLDivElement | undefined = $state();
 	let dragCounter = $state(0);
@@ -70,6 +86,7 @@
 	let showEmptyFileDialog = $state(false);
 
 	let emptyFileNames = $state<string[]>([]);
+	let emptyStatePrompt = $state(pickRandomEmptyStatePrompt());
 
 	let initialMessage = $state('');
 
@@ -354,9 +371,13 @@
 		}
 	}
 
-	afterNavigate(() => {
+	afterNavigate(({ from }) => {
 		if (!disableAutoScroll) {
 			autoScroll.enable();
+		}
+
+		if (showCenteredEmpty && isEmpty && from) {
+			emptyStatePrompt = pickRandomEmptyStatePrompt();
 		}
 	});
 
@@ -475,15 +496,11 @@
 		ondrop={handleDrop}
 		role="main"
 	>
-		<div class="w-full max-w-[48rem] px-4">
-			<div class="mb-10 text-center" in:fade={{ duration: 300 }}>
-				<h1 class="mb-2 text-2xl font-semibold tracking-tight md:text-3xl">llama.cpp</h1>
-
-				<p class="text-muted-foreground md:text-lg">
-					{serverStore.props?.modalities?.audio
-						? 'Record audio, type a message '
-						: 'Type a message'} or upload files to get started
-				</p>
+		<div class="mt-4 w-full max-w-[48rem] px-4 md:mt-6">
+			<div class="mb-6 text-center" in:fade={{ duration: 300 }}>
+				<h1 class="text-2xl font-semibold tracking-tight md:text-3xl">
+					{emptyStatePrompt}
+				</h1>
 			</div>
 
 			{#if hasPropsError}

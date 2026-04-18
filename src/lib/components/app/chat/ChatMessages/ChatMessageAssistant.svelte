@@ -8,12 +8,12 @@
 	import { useProcessingState } from '$lib/hooks/use-processing-state.svelte';
 	import { isLoading, isChatStreaming } from '$lib/stores/chat.svelte';
 	import { autoResizeTextarea, copyToClipboard, isIMEComposing } from '$lib/utils';
-	import { tick } from 'svelte';
+	import { onDestroy, tick } from 'svelte';
 	import { fade } from 'svelte/transition';
 	import { Check, X } from '@lucide/svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { Checkbox } from '$lib/components/ui/checkbox';
-	import { INPUT_CLASSES } from '$lib/constants';
+	import { INPUT_CLASSES, PREFILL_ELLIPSIS_INTERVAL_MS, SPINNER_VERBS } from '$lib/constants';
 	import { MessageRole, KeyboardKey, ChatMessageStatsView } from '$lib/enums';
 	import Label from '$lib/components/ui/label/label.svelte';
 	import { config } from '$lib/stores/settings.svelte';
@@ -150,6 +150,7 @@
 
 	let hasActiveGeneration = $derived(isLoading() || isChatStreaming());
 	let currentLiveProcessingState = $derived(processingState.processingState);
+	let isPreparingPrompt = $derived(currentLiveProcessingState?.status === 'preparing');
 	let hasNoContent = $derived(!message?.content?.trim());
 	let isActivelyProcessing = $derived(currentLiveProcessingState !== null);
 	let hasSavedStats = $derived(
@@ -203,6 +204,42 @@
 	let prefillProgressWidth = $derived(
 		showPrefillProgress ? `${Math.max(prefillProgressPercent, 4)}%` : '0%'
 	);
+	let prefillSpinnerVerb = $state<string>(SPINNER_VERBS[0]);
+	let prefillEllipsisStep = $state(0);
+	let prefillEllipsis = $derived('.'.repeat(prefillEllipsisStep));
+	let prefillEllipsisInterval: number | null = null;
+
+	function getRandomSpinnerVerb(previousVerb: string): string {
+		const nextIndex = Math.floor(Math.random() * SPINNER_VERBS.length);
+		const nextVerb = SPINNER_VERBS[nextIndex] ?? SPINNER_VERBS[0];
+
+		if (nextVerb !== previousVerb) {
+			return nextVerb;
+		}
+
+		return SPINNER_VERBS[(nextIndex + 1) % SPINNER_VERBS.length];
+	}
+
+	function startPrefillStatusAnimation(): void {
+		if (prefillEllipsisInterval !== null) {
+			return;
+		}
+
+		prefillSpinnerVerb = getRandomSpinnerVerb(prefillSpinnerVerb);
+		prefillEllipsisStep = 0;
+		prefillEllipsisInterval = window.setInterval(() => {
+			prefillEllipsisStep = (prefillEllipsisStep + 1) % 4;
+		}, PREFILL_ELLIPSIS_INTERVAL_MS);
+	}
+
+	function stopPrefillStatusAnimation(): void {
+		if (prefillEllipsisInterval !== null) {
+			window.clearInterval(prefillEllipsisInterval);
+			prefillEllipsisInterval = null;
+		}
+
+		prefillEllipsisStep = 0;
+	}
 
 	$effect(() => {
 		if (editCtx.isEditing && textareaElement) {
@@ -215,6 +252,19 @@
 			processingState.startMonitoring();
 		}
 	});
+
+	$effect(() => {
+		if (isPreparingPrompt) {
+			startPrefillStatusAnimation();
+			return;
+		}
+
+		stopPrefillStatusAnimation();
+	});
+
+	onDestroy(() => {
+		stopPrefillStatusAnimation();
+	});
 </script>
 
 <div
@@ -225,10 +275,16 @@
 	{#if showProcessingInfoTop}
 		<div class="mt-6 w-full max-w-[48rem]" in:fade>
 			<div class="processing-container">
-				<span class="processing-text">
-					{processingState.getPromptProgressText() ??
-						processingState.getProcessingMessage() ??
-						'Processing...'}
+					<span class="processing-text">
+						{#if isPreparingPrompt}
+							<span>{prefillSpinnerVerb}</span><span class="processing-ellipsis" aria-hidden="true"
+								>{prefillEllipsis}</span
+							>
+						{:else}
+							{processingState.getPromptProgressText() ??
+								processingState.getProcessingMessage() ??
+							'Processing...'}
+					{/if}
 				</span>
 
 				{#if showPrefillProgress}
@@ -384,6 +440,12 @@
 		animation: shine 1s linear infinite;
 		font-weight: 500;
 		font-size: 0.875rem;
+	}
+
+	.processing-ellipsis {
+		display: inline-block;
+		width: 3ch;
+		text-align: left;
 	}
 
 	.processing-progress-track {
