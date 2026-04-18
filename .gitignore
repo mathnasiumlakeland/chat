@@ -1,4 +1,5 @@
 node_modules
+llama.cpp/
 
 # Output
 .output
