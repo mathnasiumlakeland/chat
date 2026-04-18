@@ -4,6 +4,8 @@ export type ModelLoadState = 'idle' | 'loading' | 'ready' | 'error';
 
 export interface ModelCatalogEntry {
 	id: string;
+	spaceModelId?: string;
+	displayName: string;
 	hfRepo: string;
 	hfFilename: string;
 	runtimeKind: RuntimeKind;

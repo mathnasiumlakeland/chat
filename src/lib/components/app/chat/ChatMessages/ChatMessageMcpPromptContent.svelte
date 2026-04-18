@@ -92,45 +92,51 @@
 <div class="flex flex-col gap-2 {className}">
 	<div class="flex items-center justify-between gap-2">
 		<div class="inline-flex flex-wrap items-center gap-1.25 text-xs text-muted-foreground">
-			<Tooltip.Root>
-				<Tooltip.Trigger>
-					{#if serverFavicon}
-						<img
-							src={serverFavicon}
-							alt=""
-							class="h-3.5 w-3.5 shrink-0 rounded-sm"
-							onerror={(e) => {
-								(e.currentTarget as HTMLImageElement).style.display = 'none';
-							}}
-						/>
-					{/if}
-				</Tooltip.Trigger>
+			{#if serverFavicon}
+				<Tooltip.Root>
+					<Tooltip.Trigger>
+						{#snippet child({ props })}
+							<img
+								src={serverFavicon}
+								alt=""
+								class="h-3.5 w-3.5 shrink-0 rounded-sm"
+								onerror={(e) => {
+									(e.currentTarget as HTMLImageElement).style.display = 'none';
+								}}
+								{...props}
+							/>
+						{/snippet}
+					</Tooltip.Trigger>
 
-				<Tooltip.Content>
-					<span>{serverDisplayName}</span>
-				</Tooltip.Content>
-			</Tooltip.Root>
+					<Tooltip.Content>
+						<span>{serverDisplayName}</span>
+					</Tooltip.Content>
+				</Tooltip.Root>
+			{/if}
 
 			<TruncatedText text={prompt.name} />
 		</div>
 
 		{#if showArgBadges}
-			<div class="flex flex-wrap justify-end gap-1">
-				{#each argumentEntries as [key, value] (key)}
-					<Tooltip.Root>
-						<Tooltip.Trigger>
-							<!-- svelte-ignore a11y_no_static_element_interactions -->
-							<span
-								class="rounded-sm bg-purple-200/60 px-1.5 py-0.5 text-[10px] leading-none text-purple-700 transition-opacity dark:bg-purple-800/40 dark:text-purple-300 {hoveredArgKey &&
-								hoveredArgKey !== key
-									? 'opacity-30'
-									: ''}"
-								onmouseenter={() => (hoveredArgKey = key)}
-								onmouseleave={() => (hoveredArgKey = null)}
-							>
-								{key}
-							</span>
-						</Tooltip.Trigger>
+				<div class="flex flex-wrap justify-end gap-1">
+					{#each argumentEntries as [key, value] (key)}
+						<Tooltip.Root>
+							<Tooltip.Trigger>
+								{#snippet child({ props })}
+									<!-- svelte-ignore a11y_no_static_element_interactions -->
+									<span
+										class="rounded-sm bg-purple-200/60 px-1.5 py-0.5 text-[10px] leading-none text-purple-700 transition-opacity dark:bg-purple-800/40 dark:text-purple-300 {hoveredArgKey &&
+										hoveredArgKey !== key
+											? 'opacity-30'
+											: ''}"
+										onmouseenter={() => (hoveredArgKey = key)}
+										onmouseleave={() => (hoveredArgKey = null)}
+										{...props}
+									>
+										{key}
+									</span>
+								{/snippet}
+							</Tooltip.Trigger>
 
 						<Tooltip.Content>
 							<span class="max-w-xs break-all">{value}</span>

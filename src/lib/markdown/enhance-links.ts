@@ -7,7 +7,9 @@
 
 import type { Plugin } from 'unified';
 import type { Root, Element } from 'hast';
-import { visit } from 'unist-util-visit';
+import visit from 'unist-util-visit';
+
+const visitNode = visit as unknown as (...args: unknown[]) => void;
 
 /**
  * Rehype plugin that adds security attributes to all links.
@@ -17,7 +19,7 @@ import { visit } from 'unist-util-visit';
  */
 export const rehypeEnhanceLinks: Plugin<[], Root> = () => {
 	return (tree: Root) => {
-		visit(tree, 'element', (node: Element) => {
+		visitNode(tree, 'element', (node: Element) => {
 			if (node.tagName !== 'a') return;
 
 			const props = node.properties ?? {};

@@ -21,13 +21,15 @@
 {#if tooltipLabel}
 	<Tooltip.Root>
 		<Tooltip.Trigger>
-			<BadgeInfo class={className} onclick={handleClick}>
-				{#snippet icon()}
-					<Icon class="h-3 w-3" />
-				{/snippet}
+			{#snippet child({ props })}
+				<BadgeInfo class={className} onclick={handleClick} {...props}>
+					{#snippet icon()}
+						<Icon class="h-3 w-3" />
+					{/snippet}
 
-				{value}
-			</BadgeInfo>
+					{value}
+				</BadgeInfo>
+			{/snippet}
 		</Tooltip.Trigger>
 		<Tooltip.Content>
 			<p>{tooltipLabel}</p>

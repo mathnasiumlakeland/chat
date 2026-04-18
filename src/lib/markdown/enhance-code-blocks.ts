@@ -12,7 +12,7 @@
 
 import type { Plugin } from 'unified';
 import type { Root, Element, ElementContent } from 'hast';
-import { visit } from 'unist-util-visit';
+import visit from 'unist-util-visit';
 import {
 	CODE_BLOCK_SCROLL_CONTAINER_CLASS,
 	CODE_BLOCK_WRAPPER_CLASS,
@@ -29,6 +29,8 @@ declare global {
 		idxCodeBlock?: number;
 	}
 }
+
+const visitNode = visit as unknown as (...args: unknown[]) => void;
 
 const COPY_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-copy-icon lucide-copy"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>`;
 
@@ -154,7 +156,7 @@ function generateCodeId(): string {
  */
 export const rehypeEnhanceCodeBlocks: Plugin<[], Root> = () => {
 	return (tree: Root) => {
-		visit(tree, 'element', (node: Element, index, parent) => {
+		visitNode(tree, 'element', (node: Element, index: number | undefined, parent: Root | Element | undefined) => {
 			if (node.tagName !== 'pre' || !parent || index === undefined) return;
 
 			const codeElement = node.children.find(

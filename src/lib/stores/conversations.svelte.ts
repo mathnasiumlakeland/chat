@@ -1,13 +1,16 @@
 import { browser } from '$app/environment';
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
-import { DEFAULT_MODEL_ID, MODEL_CATALOG } from '$lib/constants/models';
+import { MCP_DEFAULT_ENABLED_LOCALSTORAGE_KEY } from '$lib/constants';
+import { DEFAULT_MODEL_ID, getModelCatalogEntry, MODEL_CATALOG } from '$lib/constants/models';
 import { databaseService } from '$lib/services/database.service';
 import { selectedModelId } from '$lib/stores/model-state.svelte';
+import { config } from '$lib/stores/settings.svelte';
 import type { ModelCatalogEntry } from '$lib/types/models';
 import type { McpServerOverride } from '$lib/types/chat';
 import { filterByLeafNodeId, findLeafNode } from '$lib/utils';
 import { trimConversationTitle } from '$lib/utils/format';
+import { appendExtrasToInferenceContent } from '$lib/utils/inference-context';
 
 export interface ConversationTreeItem {
 	conversation: DatabaseConversation;
@@ -19,13 +22,25 @@ function cloneOverrides(overrides?: McpServerOverride[]): McpServerOverride[] {
 }
 
 function inferModel(modelId?: string) {
-	return MODEL_CATALOG.find((entry) => entry.id === modelId) ?? MODEL_CATALOG[0];
+	return getModelCatalogEntry(modelId) ?? MODEL_CATALOG[0];
+}
+
+function deriveConversationTitle(content: string): string {
+	const firstLineOnly = Boolean(config().titleGenerationUseFirstLine);
+	const normalizedContent = firstLineOnly
+		? content
+				.split(/\r?\n/)
+				.find((line) => line.trim().length > 0) ?? content
+		: content;
+
+	return trimConversationTitle(normalizedContent);
 }
 
 export function buildConversationTree(
 	items: DatabaseConversation[] = conversationsStore.list as DatabaseConversation[]
 ): ConversationTreeItem[] {
 	const byParent = new Map<string | undefined, DatabaseConversation[]>();
+	const conversationIds = new Set(items.map((conversation) => conversation.id));
 
 	for (const conversation of items) {
 		const key = conversation.forkedFromConversationId;
@@ -46,7 +61,19 @@ export function buildConversationTree(
 		}
 	};
 
-	walk(undefined, 0);
+	const rootConversations = items
+		.filter(
+			(conversation) =>
+				!conversation.forkedFromConversationId ||
+				!conversationIds.has(conversation.forkedFromConversationId)
+		)
+		.sort((left, right) => right.lastModified - left.lastModified);
+
+	for (const conversation of rootConversations) {
+		result.push({ conversation, depth: 0 });
+		walk(conversation.id, 1);
+	}
+
 	return result;
 }
 
@@ -56,10 +83,66 @@ class ConversationsStore {
 	list = $state<DatabaseConversation[]>([]);
 	activeConversation = $state<DatabaseConversation | null>(null);
 	activeConversationMessages = $state<DatabaseMessage[]>([]);
-	pendingMcpServerOverrides = $state<McpServerOverride[]>([]);
+	pendingMcpServerOverrides = $state<McpServerOverride[]>(ConversationsStore.loadMcpDefaults());
 	titleUpdateConfirmationCallback?:
 		| ((currentTitle: string, newTitle: string) => Promise<boolean>)
 		| undefined;
+
+	private static loadMcpDefaults(): McpServerOverride[] {
+		if (!browser) {
+			return [];
+		}
+
+		try {
+			const raw = localStorage.getItem(MCP_DEFAULT_ENABLED_LOCALSTORAGE_KEY);
+			if (!raw) {
+				return [];
+			}
+
+			const parsed = JSON.parse(raw);
+			if (!Array.isArray(parsed)) {
+				return [];
+			}
+
+			return parsed.flatMap((entry) => {
+				if (!entry || typeof entry !== 'object') {
+					return [];
+				}
+
+				const candidate = entry as Partial<McpServerOverride>;
+				if (typeof candidate.serverId !== 'string' || typeof candidate.enabled !== 'boolean') {
+					return [];
+				}
+
+				return [
+					{
+						serverId: candidate.serverId,
+						enabled: candidate.enabled
+					}
+				];
+			});
+		} catch {
+			return [];
+		}
+	}
+
+	private saveMcpDefaults(): void {
+		if (!browser) {
+			return;
+		}
+
+		const defaults = this.pendingMcpServerOverrides.map((override) => ({
+			serverId: override.serverId,
+			enabled: override.enabled
+		}));
+
+		if (defaults.length > 0) {
+			localStorage.setItem(MCP_DEFAULT_ENABLED_LOCALSTORAGE_KEY, JSON.stringify(defaults));
+			return;
+		}
+
+		localStorage.removeItem(MCP_DEFAULT_ENABLED_LOCALSTORAGE_KEY);
+	}
 
 	get activeMessages(): DatabaseMessage[] {
 		if (!this.activeConversation?.currNode) {
@@ -95,6 +178,7 @@ class ConversationsStore {
 	clearActiveConversation(): void {
 		this.activeConversation = null;
 		this.activeConversationMessages = [];
+		this.pendingMcpServerOverrides = ConversationsStore.loadMcpDefaults();
 	}
 
 	setTitleUpdateConfirmationCallback(
@@ -180,11 +264,11 @@ class ConversationsStore {
 			this.pendingMcpServerOverrides
 		);
 
-			this.pendingMcpServerOverrides = [];
-			await this.reloadConversations();
-			await this.loadConversation(conversation.id);
-			await goto(resolve('/chat/[id]', { id: conversation.id }));
-			return conversation.id;
+		this.pendingMcpServerOverrides = [];
+		await this.reloadConversations();
+		await this.loadConversation(conversation.id);
+		await goto(resolve('/chat/[id]', { id: conversation.id }));
+		return conversation.id;
 	}
 
 	async createConversationForModel(model: ModelCatalogEntry, name = 'New chat'): Promise<DatabaseConversation> {
@@ -259,7 +343,7 @@ class ConversationsStore {
 
 		if (conversation.name === 'New chat') {
 			await databaseService.updateConversation(conversation.id, {
-				name: trimConversationTitle(prompt)
+				name: deriveConversationTitle(prompt)
 			});
 		}
 
@@ -280,7 +364,7 @@ class ConversationsStore {
 			.filter((message) => message.role !== 'tool')
 			.map((message) => ({
 				role: message.role as 'system' | 'user' | 'assistant',
-				content: message.content
+				content: appendExtrasToInferenceContent(message.content, message.extra)
 			}));
 	}
 
@@ -288,6 +372,30 @@ class ConversationsStore {
 		this.activeConversationMessages = this.activeConversationMessages.map((message) =>
 			message.id === messageId ? { ...message, ...updates } : message
 		);
+	}
+
+	addMessageToActive(message: DatabaseMessage): void {
+		const parentId = message.parent ?? null;
+		const nextMessages = this.activeConversationMessages.map((entry) =>
+			entry.id === parentId && !entry.children.includes(message.id)
+				? { ...entry, children: [...entry.children, message.id] }
+				: entry
+		);
+
+		nextMessages.push(message);
+		nextMessages.sort((left, right) => left.timestamp - right.timestamp);
+		this.activeConversationMessages = nextMessages;
+	}
+
+	async updateCurrentNode(messageId: string): Promise<void> {
+		if (!this.activeConversation) {
+			return;
+		}
+
+		this.activeConversation.currNode = messageId;
+		await databaseService.updateConversation(this.activeConversation.id, {
+			currNode: messageId
+		});
 	}
 
 	async persistMessage(
@@ -308,29 +416,128 @@ class ConversationsStore {
 		}
 	}
 
+	async updateConversationTitleWithConfirmation(
+		id: string,
+		newTitle: string
+	): Promise<boolean> {
+		const trimmedTitle = trimConversationTitle(newTitle);
+		if (!trimmedTitle) {
+			return false;
+		}
+
+		if (config().askForTitleConfirmation && this.titleUpdateConfirmationCallback) {
+			const conversation = (await databaseService.getConversation(id)) as
+				| DatabaseConversation
+				| undefined;
+			if (!conversation) {
+				return false;
+			}
+
+			const shouldUpdate = await this.titleUpdateConfirmationCallback(
+				conversation.name,
+				trimmedTitle
+			);
+			if (!shouldUpdate) {
+				return false;
+			}
+		}
+
+		await this.updateConversationName(id, trimmedTitle);
+		return true;
+	}
+
+	updateConversationTimestamp(): void {
+		if (!this.activeConversation) {
+			return;
+		}
+
+		const nextTimestamp = Date.now();
+		this.activeConversation.lastModified = nextTimestamp;
+		this.list = this.list
+			.map((conversation) =>
+				conversation.id === this.activeConversation?.id
+					? {
+							...conversation,
+							lastModified: nextTimestamp
+						}
+					: conversation
+			)
+			.sort((left, right) => right.lastModified - left.lastModified);
+	}
+
 	async deleteConversation(
 		id: string,
-		_options?: {
+		options?: {
 			deleteWithForks?: boolean;
 		}
 	): Promise<void> {
-		await databaseService.deleteConversation(id);
+		const idsToDelete = new Set<string>([id]);
+		if (options?.deleteWithForks) {
+			const queue = [id];
+			while (queue.length > 0) {
+				const parentId = queue.shift()!;
+				for (const conversation of this.list) {
+					if (
+						conversation.forkedFromConversationId === parentId &&
+						!idsToDelete.has(conversation.id)
+					) {
+						idsToDelete.add(conversation.id);
+						queue.push(conversation.id);
+					}
+				}
+			}
+		}
+
+		await databaseService.deleteConversation(id, options);
 		await this.reloadConversations();
 
-		if (this.activeConversation?.id === id) {
+		if (this.activeConversation && idsToDelete.has(this.activeConversation.id)) {
 			this.clearActiveConversation();
 			await goto(resolve('/'));
+		} else if (this.activeConversation) {
+			await this.loadConversation(this.activeConversation.id);
 		}
 	}
 
 	async navigateToSibling(siblingId: string): Promise<void> {
 		if (!this.activeConversation) return;
 
+		const previousRootMessage = this.activeConversationMessages.find(
+			(message) => message.type === 'root' && message.parent === null
+		);
+		const previousFirstUserMessage = previousRootMessage
+			? this.activeConversationMessages.find(
+					(message) => message.role === 'user' && message.parent === previousRootMessage.id
+				)
+			: undefined;
+
 		await databaseService.updateConversation(this.activeConversation.id, {
-			currNode: siblingId
+			currNode: findLeafNode(this.activeConversationMessages, siblingId)
 		});
 
 		await this.loadConversation(this.activeConversation.id);
+
+		const nextRootMessage = this.activeConversationMessages.find(
+			(message) => message.type === 'root' && message.parent === null
+		);
+		const nextFirstUserMessage = nextRootMessage
+			? this.activeConversationMessages.find(
+					(message) => message.role === 'user' && message.parent === nextRootMessage.id
+				)
+			: undefined;
+
+		if (
+			nextFirstUserMessage &&
+			nextFirstUserMessage.content.trim() &&
+			(!previousFirstUserMessage ||
+				nextFirstUserMessage.id !== previousFirstUserMessage.id ||
+				nextFirstUserMessage.content.trim() !== previousFirstUserMessage.content.trim())
+		) {
+			await this.updateConversationTitleWithConfirmation(
+				this.activeConversation.id,
+				deriveConversationTitle(nextFirstUserMessage.content)
+			);
+		}
 	}
 
 	async forkConversation(
@@ -374,10 +581,10 @@ class ConversationsStore {
 			parentId = cloned.id;
 		}
 
-			await this.reloadConversations();
-			await this.loadConversation(forkedConversation.id);
-			await goto(resolve('/chat/[id]', { id: forkedConversation.id }));
-		}
+		await this.reloadConversations();
+		await this.loadConversation(forkedConversation.id);
+		await goto(resolve('/chat/[id]', { id: forkedConversation.id }));
+	}
 
 	getAllMcpServerOverrides(): McpServerOverride[] {
 		return cloneOverrides(
@@ -391,21 +598,51 @@ class ConversationsStore {
 		);
 	}
 
-	setMcpServerOverride(serverId: string, enabled: boolean): void {
+	private setPendingMcpServerOverride(
+		serverId: string,
+		enabled: boolean | undefined
+	): void {
+		if (enabled === undefined) {
+			this.pendingMcpServerOverrides = this.pendingMcpServerOverrides.filter(
+				(override) => override.serverId !== serverId
+			);
+		} else {
+			const overrides = this.pendingMcpServerOverrides.filter(
+				(override) => override.serverId !== serverId
+			);
+			overrides.push({ serverId, enabled });
+			this.pendingMcpServerOverrides = overrides;
+		}
+
+		this.saveMcpDefaults();
+	}
+
+	setMcpServerOverride(serverId: string, enabled: boolean | undefined): void {
 		const target = this.activeConversation ?? null;
+		if (!target) {
+			this.setPendingMcpServerOverride(serverId, enabled);
+			return;
+		}
+
 		const overrides = this.getAllMcpServerOverrides().filter(
 			(override) => override.serverId !== serverId
 		);
-		overrides.push({ serverId, enabled });
-
-		if (target) {
-			target.mcpServerOverrides = overrides;
-			void databaseService.updateConversation(target.id, {
-				mcpServerOverrides: overrides
-			} as Partial<DatabaseConversation>);
-		} else {
-			this.pendingMcpServerOverrides = overrides;
+		if (enabled !== undefined) {
+			overrides.push({ serverId, enabled });
 		}
+
+		target.mcpServerOverrides = overrides.length > 0 ? overrides : undefined;
+		this.list = this.list.map((conversation) =>
+			conversation.id === target.id
+				? {
+						...conversation,
+						mcpServerOverrides: target.mcpServerOverrides
+					}
+				: conversation
+		);
+		void databaseService.updateConversation(target.id, {
+			mcpServerOverrides: target.mcpServerOverrides
+		} as Partial<DatabaseConversation>);
 	}
 
 	async toggleMcpServerForChat(serverId: string): Promise<void> {
@@ -439,8 +676,10 @@ class ConversationsStore {
 		URL.revokeObjectURL(url);
 	}
 
-	async importConversationsData(_data: ExportedConversations): Promise<void> {
-		console.warn('Conversation import is not implemented for the browser runtime yet.');
+	async importConversationsData(data: ExportedConversations): Promise<void> {
+		const conversations = Array.isArray(data) ? data : [data];
+		await databaseService.importConversations(conversations);
+		await this.reloadConversations();
 	}
 
 	async deleteAll(): Promise<void> {

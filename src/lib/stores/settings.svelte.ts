@@ -82,13 +82,26 @@ class SettingsStore {
 		this.persist();
 	}
 
-	syncWithServerDefaults(): void {}
+	syncWithServerDefaults(): void {
+		const nextOverrides = new Set<string>();
+
+		for (const key of this.userOverrides) {
+			const currentValue = (this.config as Record<string, SettingsConfigValue>)[key];
+			const defaultValue = (SETTING_CONFIG_DEFAULT as Record<string, SettingsConfigValue>)[key];
+
+			if (currentValue !== defaultValue) {
+				nextOverrides.add(key);
+			}
+		}
+
+		this.userOverrides = nextOverrides;
+		this.persist();
+	}
 
 	forceSyncWithServerDefaults(): void {
-		this.config = {
-			...SETTING_CONFIG_DEFAULT,
-			...this.config
-		};
+		this.config = { ...SETTING_CONFIG_DEFAULT };
+		this.theme = String(SETTING_CONFIG_DEFAULT.theme ?? 'system');
+		this.userOverrides = new Set();
 		this.persist();
 	}
 }

@@ -12,11 +12,12 @@
 	} from '$lib/components/app';
 	import * as Alert from '$lib/components/ui/alert';
 	import * as AlertDialog from '$lib/components/ui/alert-dialog';
-	import { KeyboardKey } from '$lib/enums';
+	import { AttachmentType, KeyboardKey } from '$lib/enums';
 	import { createAutoScrollController } from '$lib/hooks/use-auto-scroll.svelte';
 	import {
 		chatStore,
 		errorDialog,
+		isPreparingNewChat,
 		isLoading,
 		isChatStreaming,
 		isEditing,
@@ -27,10 +28,13 @@
 		activeMessages,
 		activeConversation
 	} from '$lib/stores/conversations.svelte';
+	import { mcpStore } from '$lib/stores/mcp.svelte';
+	import { mcpResourceStore } from '$lib/stores/mcp-resources.svelte';
+	import { modelLoadProgress } from '$lib/stores/model-state.svelte';
 	import { config } from '$lib/stores/settings.svelte';
 	import { serverLoading, serverError, serverStore, isRouterMode } from '$lib/stores/server.svelte';
 	import { modelsStore, modelOptions, selectedModelId } from '$lib/stores/models.svelte';
-	import { isFileTypeSupported, filterFilesByModalities } from '$lib/utils';
+	import { getResourceTextContent, isFileTypeSupported, filterFilesByModalities } from '$lib/utils';
 	import { parseFilesToMessageExtras, processFilesToChatUploaded } from '$lib/utils/browser-only';
 	import { ErrorDialogType } from '$lib/enums';
 	import { onMount } from 'svelte';
@@ -76,6 +80,9 @@
 	let activeErrorDialog = $derived(errorDialog());
 	let isServerLoading = $derived(serverLoading());
 	let hasPropsError = $derived(!!serverError());
+	let isPreparingFirstMessage = $derived(isPreparingNewChat());
+	let currentModelLoadProgress = $derived(modelLoadProgress());
+	let showPreparingModelState = $derived(isPreparingFirstMessage);
 
 	let isCurrentConversationLoading = $derived(isLoading() || isChatStreaming());
 
@@ -104,6 +111,15 @@
 		}
 
 		return null;
+	});
+
+	let activeModelLabel = $derived.by(() => {
+		if (!activeModelId) {
+			return null;
+		}
+
+		const option = modelOptions().find((entry) => entry.model === activeModelId);
+		return option?.name ?? activeModelId.split('/').pop() ?? activeModelId;
 	});
 
 	let modelPropsVersion = $state(0);
@@ -235,6 +251,34 @@
 		autoScroll.handleScroll();
 	}
 
+	async function resolveMcpResourceExtras(): Promise<DatabaseMessageExtra[]> {
+		const resourceAttachments = $state.snapshot(mcpResourceStore.attachments);
+		const extras: DatabaseMessageExtra[] = [];
+
+		for (const attachment of resourceAttachments) {
+			let content = getResourceTextContent(attachment.content);
+
+			if (!content.trim()) {
+				const loadedContent = await mcpStore.readResourceByUri(
+					attachment.resource.serverName,
+					attachment.resource.uri
+				);
+				content = getResourceTextContent(loadedContent);
+			}
+
+			extras.push({
+				type: AttachmentType.MCP_RESOURCE,
+				name: attachment.resource.name,
+				uri: attachment.resource.uri,
+				serverName: attachment.resource.serverName,
+				content,
+				mimeType: attachment.resource.mimeType
+			});
+		}
+
+		return extras;
+	}
+
 	async function handleSendMessage(message: string, files?: ChatUploadedFile[]): Promise<boolean> {
 		const plainFiles = files ? $state.snapshot(files) : undefined;
 		const result = plainFiles
@@ -252,11 +296,14 @@
 			return false;
 		}
 
-		const extras = result?.extras;
+		const extras = [...(result?.extras ?? []), ...(await resolveMcpResourceExtras())];
 
 		// Enable autoscroll for user-initiated message sending
 		autoScroll.enable();
 		await chatStore.sendMessage(message, extras);
+		for (const attachment of $state.snapshot(mcpResourceStore.attachments)) {
+			mcpStore.removeResourceAttachment(attachment.id);
+		}
 		autoScroll.scrollToBottom();
 
 		return true;
@@ -397,14 +444,17 @@
 
 				<div class="conversation-chat-form pointer-events-auto rounded-t-3xl">
 					<ChatScreenForm
-						disabled={hasPropsError || isEditing()}
+						disabled={hasPropsError || isEditing() || isPreparingFirstMessage}
 						{initialMessage}
 						isLoading={isCurrentConversationLoading}
+						modelLoadingLabel={activeModelLabel}
+						modelLoadingProgress={currentModelLoadProgress}
 						onFileRemove={handleFileRemove}
 						onFileUpload={handleFileUpload}
 						onSend={handleSendMessage}
 						onStop={() => chatStore.stopGeneration()}
 						onSystemPromptAdd={handleSystemPromptAdd}
+						showModelLoadingState={showPreparingModelState}
 						showHelperText={false}
 						bind:uploadedFiles
 					/>
@@ -461,14 +511,17 @@
 
 			<div in:fly={{ y: 10, duration: 250, delay: hasPropsError ? 0 : 300 }}>
 				<ChatScreenForm
-					disabled={hasPropsError}
+					disabled={hasPropsError || isPreparingFirstMessage}
 					{initialMessage}
 					isLoading={isCurrentConversationLoading}
+					modelLoadingLabel={activeModelLabel}
+					modelLoadingProgress={currentModelLoadProgress}
 					onFileRemove={handleFileRemove}
 					onFileUpload={handleFileUpload}
 					onSend={handleSendMessage}
 					onStop={() => chatStore.stopGeneration()}
 					onSystemPromptAdd={handleSystemPromptAdd}
+					showModelLoadingState={showPreparingModelState}
 					showHelperText
 					bind:uploadedFiles
 				/>

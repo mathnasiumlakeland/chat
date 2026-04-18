@@ -43,7 +43,9 @@
 {#if tooltipLabel}
 	<Tooltip.Root>
 		<Tooltip.Trigger>
-			{@render submitButton()}
+			{#snippet child({ props })}
+				{@render submitButton(props)}
+			{/snippet}
 		</Tooltip.Trigger>
 
 		<Tooltip.Content>

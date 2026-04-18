@@ -1,8 +1,6 @@
 <script lang="ts">
 	import {
 		CircleAlert,
-		Heart,
-		HeartOff,
 		Info,
 		Loader2,
 		Power,
@@ -19,7 +17,6 @@
 		option: ModelOption;
 		isSelected: boolean;
 		isHighlighted: boolean;
-		isFav: boolean;
 		showOrgName?: boolean;
 		onSelect: (modelId: string) => void;
 		onMouseEnter: () => void;
@@ -31,7 +28,6 @@
 		option,
 		isSelected,
 		isHighlighted,
-		isFav,
 		showOrgName = false,
 		onSelect,
 		onMouseEnter,
@@ -78,32 +74,13 @@
 	/>
 
 	<div class="flex shrink-0 items-center gap-1">
-		<!-- svelte-ignore a11y_no_static_element_interactions -->
-		<!-- svelte-ignore a11y_click_events_have_key_events -->
-		<div
-			class="pointer-events-none flex items-center justify-center gap-0.75 pl-2 opacity-0 group-hover:pointer-events-auto group-hover:opacity-100"
-			onclick={(e) => e.stopPropagation()}
-		>
-			{#if isFav}
-				<ActionIcon
-					iconSize="h-2.5 w-2.5"
-					icon={HeartOff}
-					tooltip="Remove from favorites"
-					class="h-3 w-3 hover:text-foreground"
-					onclick={() => modelsStore.toggleFavorite(option.model)}
-				/>
-			{:else}
-				<ActionIcon
-					iconSize="h-2.5 w-2.5"
-					icon={Heart}
-					tooltip="Add to favorites"
-					class="h-3 w-3 hover:text-foreground"
-					onclick={() => modelsStore.toggleFavorite(option.model)}
-				/>
-			{/if}
-
-			<!-- info button: only shown when model is loaded and callback is provided -->
-			{#if isLoaded && onInfoClick}
+		{#if isLoaded && onInfoClick}
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<!-- svelte-ignore a11y_click_events_have_key_events -->
+			<div
+				class="pointer-events-none flex items-center justify-center gap-0.75 pl-2 opacity-0 group-hover:pointer-events-auto group-hover:opacity-100"
+				onclick={(e) => e.stopPropagation()}
+			>
 				<ActionIcon
 					iconSize="h-2.5 w-2.5"
 					icon={Info}
@@ -111,8 +88,8 @@
 					class="h-3 w-3 hover:text-foreground"
 					onclick={() => onInfoClick(option.model)}
 				/>
-			{/if}
-		</div>
+			</div>
+		{/if}
 
 		{#if isLoading}
 			<Loader2 class="h-4 w-4 animate-spin text-muted-foreground" />

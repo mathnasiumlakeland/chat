@@ -2,15 +2,25 @@ import { describe, expect, it } from 'vitest';
 import { resolveChatFormModelSelection } from './chat-form-actions-model-sync';
 
 const OPTIONS = [
-	{ id: 'bonsai-1.7b', model: 'prism-ml/Bonsai-1.7B-gguf', name: 'Bonsai 1.7B', capabilities: [] },
-	{ id: 'bonsai-4b', model: 'prism-ml/Bonsai-4B-gguf', name: 'Bonsai 4B', capabilities: [] }
+	{
+		id: 'bonsai-1.7b',
+		model: 'onnx-community/Ternary-Bonsai-1.7B-ONNX',
+		name: 'Bonsai 1.7B',
+		capabilities: []
+	},
+	{
+		id: 'bonsai-4b',
+		model: 'onnx-community/Ternary-Bonsai-4B-ONNX',
+		name: 'Bonsai 4B',
+		capabilities: []
+	}
 ];
 
 describe('resolveChatFormModelSelection', () => {
 	it('does not reselect the conversation model when it is already active', () => {
 		expect(
 			resolveChatFormModelSelection({
-				conversationModel: 'prism-ml/Bonsai-1.7B-gguf',
+				conversationModel: 'onnx-community/Ternary-Bonsai-1.7B-ONNX',
 				currentSelectedModelId: 'bonsai-1.7b',
 				isRouter: true,
 				loadedModelIds: [],
@@ -22,7 +32,7 @@ describe('resolveChatFormModelSelection', () => {
 	it('selects the conversation model when it differs from the current selection', () => {
 		expect(
 			resolveChatFormModelSelection({
-				conversationModel: 'prism-ml/Bonsai-4B-gguf',
+				conversationModel: 'onnx-community/Ternary-Bonsai-4B-ONNX',
 				currentSelectedModelId: 'bonsai-1.7b',
 				isRouter: true,
 				loadedModelIds: [],
@@ -37,7 +47,7 @@ describe('resolveChatFormModelSelection', () => {
 				conversationModel: null,
 				currentSelectedModelId: null,
 				isRouter: true,
-				loadedModelIds: ['prism-ml/Bonsai-4B-gguf'],
+				loadedModelIds: ['onnx-community/Ternary-Bonsai-4B-ONNX'],
 				options: OPTIONS
 			})
 		).toBe('bonsai-4b');
@@ -49,7 +59,7 @@ describe('resolveChatFormModelSelection', () => {
 				conversationModel: null,
 				currentSelectedModelId: 'bonsai-1.7b',
 				isRouter: true,
-				loadedModelIds: ['prism-ml/Bonsai-4B-gguf'],
+				loadedModelIds: ['onnx-community/Ternary-Bonsai-4B-ONNX'],
 				options: OPTIONS
 			})
 		).toBeNull();

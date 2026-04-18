@@ -1,12 +1,27 @@
 import Dexie, { type EntityTable } from 'dexie';
-import { DEFAULT_MODEL_ID, MODEL_CATALOG } from '$lib/constants/models';
-import type { ConversationRecord, MessageRecord } from '$lib/types/chat';
+import {
+	DEFAULT_MODEL_ID,
+	getModelCatalogEntry,
+	MODEL_CATALOG,
+	normalizeModelId
+} from '$lib/constants/models';
+import type {
+	ConversationRecord,
+	ExportedConversation,
+	MessageRecord
+} from '$lib/types/chat';
 import type { ModelStateRecord } from '$lib/types/models';
 import { findDescendantMessages } from '$lib/utils/branching';
 import { createId } from '$lib/utils/uuid';
 
 const DATABASE_NAME = 'bonsai-browser-chat';
 const DEFAULT_SAMPLING_PRESET_ID = MODEL_CATALOG[0].defaultSampling.id;
+const DEFAULT_RUNTIME_KIND =
+	getModelCatalogEntry(DEFAULT_MODEL_ID)?.runtimeKind ?? 'onnx-webgpu';
+
+function inferRuntimeKind(modelId: string | null | undefined): ConversationRecord['runtimeKind'] {
+	return getModelCatalogEntry(modelId)?.runtimeKind ?? DEFAULT_RUNTIME_KIND;
+}
 
 export class BonsaiChatDatabase extends Dexie {
 	conversations!: EntityTable<ConversationRecord, 'id'>;
@@ -34,7 +49,7 @@ export class BonsaiChatDatabase extends Dexie {
 					.toCollection()
 					.modify((conversation) => {
 						conversation.modelId ??= DEFAULT_MODEL_ID;
-						conversation.runtimeKind ??= 'gguf-wasm';
+						conversation.runtimeKind ??= inferRuntimeKind(conversation.modelId);
 						conversation.samplingPresetId ??= DEFAULT_SAMPLING_PRESET_ID;
 					});
 
@@ -44,6 +59,48 @@ export class BonsaiChatDatabase extends Dexie {
 					loadState: 'idle',
 					lastUsedAt: null,
 					lastError: null
+				});
+			});
+
+		this.version(3)
+			.stores({
+				conversations:
+					'id, lastModified, currNode, name, modelId, runtimeKind, samplingPresetId',
+				messages: 'id, convId, type, role, timestamp, parent, children',
+				modelState: 'id, selectedModelId, loadState, lastUsedAt'
+			})
+			.upgrade(async (transaction) => {
+				await transaction
+					.table<ConversationRecord, string>('conversations')
+					.toCollection()
+					.modify((conversation) => {
+						const normalizedModelId = normalizeModelId(conversation.modelId) ?? DEFAULT_MODEL_ID;
+						conversation.modelId = normalizedModelId;
+						conversation.runtimeKind = inferRuntimeKind(normalizedModelId);
+						conversation.samplingPresetId ??= DEFAULT_SAMPLING_PRESET_ID;
+					});
+
+				await transaction
+					.table<MessageRecord, string>('messages')
+					.toCollection()
+					.modify((message) => {
+						if (!message.model) {
+							return;
+						}
+
+						message.model = normalizeModelId(message.model) ?? message.model;
+					});
+
+				const modelState = await transaction
+					.table<ModelStateRecord, 'id'>('modelState')
+					.get({ id: 'default' });
+				if (!modelState) {
+					return;
+				}
+
+				await transaction.table<ModelStateRecord, 'id'>('modelState').put({
+					...modelState,
+					selectedModelId: normalizeModelId(modelState.selectedModelId) ?? DEFAULT_MODEL_ID
 				});
 			});
 	}
@@ -153,7 +210,11 @@ export class DatabaseService {
 	}
 
 	async getLatestConversationForModel(modelId: string): Promise<ConversationRecord | undefined> {
-		const matches = await this.db.conversations.where('modelId').equals(modelId).toArray();
+		const normalizedModelId = normalizeModelId(modelId) ?? modelId;
+		const matches = await this.db.conversations
+			.where('modelId')
+			.equals(normalizedModelId)
+			.toArray();
 		return matches.sort((left, right) => right.lastModified - left.lastModified)[0];
 	}
 
@@ -197,10 +258,76 @@ export class DatabaseService {
 		});
 	}
 
-	async deleteConversation(id: string): Promise<void> {
+	async deleteConversation(id: string, options?: { deleteWithForks?: boolean }): Promise<void> {
 		await this.db.transaction('rw', [this.db.conversations, this.db.messages], async () => {
+			if (options?.deleteWithForks) {
+				const conversations = await this.db.conversations.toArray();
+				const idsToDelete = new Set<string>([id]);
+				const queue = [id];
+
+				while (queue.length > 0) {
+					const parentId = queue.shift()!;
+
+					for (const conversation of conversations) {
+						if (
+							conversation.forkedFromConversationId === parentId &&
+							!idsToDelete.has(conversation.id)
+						) {
+							idsToDelete.add(conversation.id);
+							queue.push(conversation.id);
+						}
+					}
+				}
+
+				for (const conversationId of idsToDelete) {
+					await this.db.conversations.delete(conversationId);
+					await this.db.messages.where('convId').equals(conversationId).delete();
+				}
+
+				return;
+			}
+
+			const conversation = await this.db.conversations.get(id);
+			const newParentId = conversation?.forkedFromConversationId;
+			const directChildren = (await this.db.conversations.toArray()).filter(
+				(entry) => entry.forkedFromConversationId === id
+			);
+
+			for (const child of directChildren) {
+				await this.db.conversations.update(child.id, {
+					forkedFromConversationId: newParentId
+				});
+			}
+
 			await this.db.conversations.delete(id);
 			await this.db.messages.where('convId').equals(id).delete();
+		});
+	}
+
+	async importConversations(
+		data: ExportedConversation[]
+	): Promise<{ imported: number; skipped: number }> {
+		let imported = 0;
+		let skipped = 0;
+
+		return this.db.transaction('rw', [this.db.conversations, this.db.messages], async () => {
+			for (const item of data) {
+				const existing = await this.db.conversations.get(item.conv.id);
+				if (existing) {
+					skipped += 1;
+					continue;
+				}
+
+				await this.db.conversations.add(item.conv);
+
+				for (const message of item.messages) {
+					await this.db.messages.put(message);
+				}
+
+				imported += 1;
+			}
+
+			return { imported, skipped };
 		});
 	}
 
@@ -259,7 +386,7 @@ export class DatabaseService {
 		return databaseService.createConversation({
 			name,
 			modelId: DEFAULT_MODEL_ID,
-			runtimeKind: 'gguf-wasm',
+			runtimeKind: inferRuntimeKind(DEFAULT_MODEL_ID),
 			samplingPresetId: DEFAULT_SAMPLING_PRESET_ID
 		});
 	}
@@ -302,8 +429,17 @@ export class DatabaseService {
 		return databaseService.updateMessage(id, updates);
 	}
 
-	static async deleteConversation(id: string): Promise<void> {
-		return databaseService.deleteConversation(id);
+	static async deleteConversation(
+		id: string,
+		options?: { deleteWithForks?: boolean }
+	): Promise<void> {
+		return databaseService.deleteConversation(id, options);
+	}
+
+	static async importConversations(
+		data: ExportedConversation[]
+	): Promise<{ imported: number; skipped: number }> {
+		return databaseService.importConversations(data);
 	}
 
 	static async deleteMessage(id: string): Promise<void> {

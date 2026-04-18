@@ -1,7 +1,10 @@
 import type { Plugin } from 'unified';
-import { visit } from 'unist-util-visit';
-import type { Break, Content, Paragraph, PhrasingContent, Root, Text } from 'mdast';
+import visit from 'unist-util-visit';
+import type { Break, Content, Html, Paragraph, PhrasingContent, Root, Text } from 'mdast';
+import type { Parent } from 'unist';
 import { LINE_BREAK, NBSP, PHRASE_PARENTS, TAB_AS_SPACES } from '$lib/constants';
+
+const visitNode = visit as unknown as (...args: unknown[]) => void;
 
 /**
  * remark plugin that rewrites raw HTML nodes into plain-text equivalents.
@@ -61,8 +64,8 @@ function createLiteralChildren(value: string): PhrasingContent[] {
 }
 
 export const remarkLiteralHtml: Plugin<[], Root> = () => {
-	return (tree) => {
-		visit(tree, 'html', (node, index, parent) => {
+	return (tree: Root) => {
+		visitNode(tree, 'html', (node: Html, index: number | undefined, parent: Parent | undefined) => {
 			if (!parent || typeof index !== 'number') {
 				return;
 			}

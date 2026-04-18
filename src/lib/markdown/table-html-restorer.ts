@@ -66,9 +66,11 @@
 
 import type { Plugin } from 'unified';
 import type { Element, ElementContent, Root, Text } from 'hast';
-import { visit } from 'unist-util-visit';
+import visit from 'unist-util-visit';
 import { visitParents } from 'unist-util-visit-parents';
 import { BR_PATTERN, LIST_PATTERN, LI_PATTERN } from '$lib/constants';
+
+const visitNode = visit as unknown as (...args: unknown[]) => void;
 
 /**
  * Expands text containing `<br>` tags into an array of text nodes and br elements.
@@ -173,7 +175,7 @@ function processCell(cell: Element) {
 }
 
 export const rehypeRestoreTableHtml: Plugin<[], Root> = () => (tree) => {
-	visit(tree, 'element', (node: Element) => {
+	visitNode(tree, 'element', (node: Element) => {
 		if (node.tagName === 'td' || node.tagName === 'th') {
 			processCell(node);
 		}

@@ -31,6 +31,19 @@
 		}
 	});
 
+	$effect(() => {
+		if (initialLoadComplete || servers.length === 0) return;
+
+		const uncheckedServers = servers.filter((server) => {
+			const state = mcpStore.getHealthCheckState(server.id);
+			return state.status === HealthCheckStatus.IDLE;
+		});
+
+		if (uncheckedServers.length > 0) {
+			void mcpStore.runHealthChecksForServers(uncheckedServers);
+		}
+	});
+
 	let isAddingServer = $state(false);
 	let newServerUrl = $state('');
 	let newServerHeaders = $state('');
@@ -70,6 +83,7 @@
 		});
 
 		conversationsStore.setMcpServerOverride(newServerId, true);
+		void mcpStore.runHealthCheck(newServerId);
 
 		isAddingServer = false;
 		newServerUrl = '';

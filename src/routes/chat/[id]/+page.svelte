@@ -27,7 +27,7 @@
 </script>
 
 <svelte:head>
-	<title>{activeConversation()?.name || 'Chat'} - Bonsai Browser Chat</title>
+		<title>{activeConversation()?.name || 'Chat'} - Local Chat</title>
 </svelte:head>
 
 <ChatScreen />

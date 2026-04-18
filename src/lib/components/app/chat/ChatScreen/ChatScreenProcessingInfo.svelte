@@ -1,39 +1,32 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
 	import { PROCESSING_INFO_TIMEOUT } from '$lib/constants';
 	import { useProcessingState } from '$lib/hooks/use-processing-state.svelte';
-	import { chatStore, isLoading, isChatStreaming } from '$lib/stores/chat.svelte';
-	import { activeMessages, activeConversation } from '$lib/stores/conversations.svelte';
+	import { isConversationLoading } from '$lib/stores/chat.svelte';
+	import { activeConversation } from '$lib/stores/conversations.svelte';
 	import { config } from '$lib/stores/settings.svelte';
 
-	const processingState = useProcessingState();
+	const processingState = useProcessingState(() => ({
+		conversationId: activeConversation()?.id ?? null
+	}));
 
-	let isCurrentConversationLoading = $derived(isLoading());
-	let isStreaming = $derived(isChatStreaming());
-	let hasProcessingData = $derived(processingState.processingState !== null);
+	let currentConversationId = $derived(activeConversation()?.id ?? null);
+	let isCurrentConversationLoading = $derived(isConversationLoading(currentConversationId));
 	let processingDetails = $derived(processingState.getTechnicalDetails());
+	let hasProcessingData = $derived(processingDetails.length > 0);
 
-	let showProcessingInfo = $derived(
-		isCurrentConversationLoading || isStreaming || config().keepStatsVisible || hasProcessingData
-	);
-
-	$effect(() => {
-		const conversation = activeConversation();
-
-		untrack(() => chatStore.setActiveProcessingConversation(conversation?.id ?? null));
-	});
+	let showProcessingInfo = $derived(isCurrentConversationLoading || hasProcessingData);
 
 	$effect(() => {
 		const keepStatsVisible = config().keepStatsVisible;
-		const shouldMonitor = keepStatsVisible || isCurrentConversationLoading || isStreaming;
+		const shouldMonitor = keepStatsVisible || isCurrentConversationLoading;
 
 		if (shouldMonitor) {
 			processingState.startMonitoring();
 		}
 
-		if (!isCurrentConversationLoading && !isStreaming && !keepStatsVisible) {
+		if (!isCurrentConversationLoading && !keepStatsVisible) {
 			const timeout = setTimeout(() => {
-				if (!config().keepStatsVisible && !isChatStreaming()) {
+				if (!config().keepStatsVisible && !isConversationLoading(currentConversationId)) {
 					processingState.stopMonitoring();
 				}
 			}, PROCESSING_INFO_TIMEOUT);
@@ -41,30 +34,19 @@
 			return () => clearTimeout(timeout);
 		}
 	});
-
-	$effect(() => {
-		const conversation = activeConversation();
-		const messages = activeMessages() as DatabaseMessage[];
-		const keepStatsVisible = config().keepStatsVisible;
-
-		if (keepStatsVisible && conversation) {
-			if (messages.length === 0) {
-				untrack(() => chatStore.clearProcessingState(conversation.id));
-				return;
-			}
-
-			if (!isCurrentConversationLoading && !isStreaming) {
-				untrack(() => chatStore.restoreProcessingStateFromMessages(messages, conversation.id));
-			}
-		}
-	});
 </script>
 
 <div class="chat-processing-info-container pointer-events-none" class:visible={showProcessingInfo}>
 	<div class="chat-processing-info-content">
-		{#each processingDetails as detail (detail)}
-			<span class="chat-processing-info-detail pointer-events-auto backdrop-blur-sm">{detail}</span>
-		{/each}
+		{#if processingDetails.length > 0}
+			<div class="chat-processing-info-details">
+				{#each processingDetails as detail (detail)}
+					<span class="chat-processing-info-detail pointer-events-auto backdrop-blur-sm">
+						{detail}
+					</span>
+				{/each}
+			</div>
+		{/if}
 	</div>
 </div>
 

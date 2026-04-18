@@ -43,6 +43,19 @@ function buildLibraryLabel(runtimeManifest: PrismRuntimeManifest): string {
 	return `Prism raw Asyncify WebGPU (${runtimeManifest.commandSubmitBatchSize}/${runtimeManifest.numParamBuffers})`;
 }
 
+function sanitizeContextTokens(
+	requestedContextTokens: number | undefined,
+	fallbackContextTokens: number
+): number {
+	const resolvedContextTokens = requestedContextTokens ?? fallbackContextTokens;
+
+	if (!Number.isFinite(resolvedContextTokens)) {
+		return fallbackContextTokens;
+	}
+
+	return Math.max(1, Math.min(Math.floor(resolvedContextTokens), fallbackContextTokens));
+}
+
 function createChainedAbortController(externalAbortSignal?: AbortSignal): {
 	abort: () => void;
 	controller: AbortController;
@@ -81,7 +94,7 @@ export class GgufWasmBackend implements InferenceBackend {
 	}
 
 	#buildLoadConfig(entry: ModelCatalogEntry, requestedContextTokens?: number): RawQ1LoadConfig {
-		const nCtx = Math.min(requestedContextTokens ?? entry.contextTokens, 4_096);
+		const nCtx = sanitizeContextTokens(requestedContextTokens, entry.contextTokens);
 		return {
 			nCtx,
 			nBatch: Math.min(nCtx, 256),

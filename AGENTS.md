@@ -65,7 +65,8 @@ Guidance for coding agents working in this repository.
   - submit batch size `64`
   - param buffer count `128`
   - param upload mode `queue-write-buffer`
-  - load config `n_ctx=4096`, `n_batch=256`, `n_threads=1`, `n_gpu_layers=999`, `offload_kqv=true`
+  - load config `n_batch=256`, `n_threads=1`, `n_gpu_layers=999`, `offload_kqv=true`
+  - current Bonsai model defaults request their documented long-context window (`n_ctx=32768`)
 - The experimental non-vector Q1 prefill path is not the default app configuration unless explicitly changed.
 - Cross-origin isolation headers in `vite.config.ts` are important for WASM threading behavior. Preserve them unless the runtime strategy changes knowingly.
 
@@ -81,7 +82,7 @@ Guidance for coding agents working in this repository.
 - Current catalog entries remain:
   - `prism-ml/Bonsai-1.7B-gguf`
   - `prism-ml/Bonsai-4B-gguf`
-- Both current GGUF entries are configured for a `4096` token context in the app.
+- Both current GGUF entries are configured for a `32768` token context in the app.
 - Model selection may still be changed from the copied llama.cpp model selector UI after startup.
 
 ## Local Persistence Rules

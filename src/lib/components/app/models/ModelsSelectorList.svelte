@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { modelsStore } from '$lib/stores/models.svelte';
 	import { ModelsSelectorOption } from '$lib/components/app';
 	import type { GroupedModelOptions, ModelItem } from './utils';
 
@@ -30,13 +29,11 @@
 {#snippet defaultOption(item: ModelItem, showOrgName: boolean)}
 	{@const { option } = item}
 	{@const isSelected = currentModel === option.model || activeId === option.id}
-	{@const isFav = modelsStore.favoriteModelIds.has(option.model)}
 
 	<ModelsSelectorOption
 		{option}
 		{isSelected}
 		isHighlighted={false}
-		{isFav}
 		{showOrgName}
 		{onSelect}
 		{onInfoClick}
@@ -48,13 +45,6 @@
 {#if groups.loaded.length > 0}
 	<p class={sectionHeaderClass}>Loaded models</p>
 	{#each groups.loaded as item (`loaded-${item.option.id}`)}
-		{@render render(item, true)}
-	{/each}
-{/if}
-
-{#if groups.favorites.length > 0}
-	<p class={sectionHeaderClass}>Favorite models</p>
-	{#each groups.favorites as item (`fav-${item.option.id}`)}
 		{@render render(item, true)}
 	{/each}
 {/if}

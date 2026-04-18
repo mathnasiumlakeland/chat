@@ -25,22 +25,25 @@
 <div class="flex items-center gap-1 {className}">
 	<Tooltip.Root>
 		<Tooltip.Trigger>
-			<Button
-				class="h-8 w-8 rounded-full p-0 {isRecording
-					? 'animate-pulse bg-red-500 text-white hover:bg-red-600'
-					: ''}"
-				disabled={disabled || isLoading || !hasAudioModality}
-				onclick={onMicClick}
-				type="button"
-			>
-				<span class="sr-only">{isRecording ? 'Stop recording' : 'Start recording'}</span>
+			{#snippet child({ props })}
+				<Button
+					class="h-8 w-8 rounded-full p-0 {isRecording
+						? 'animate-pulse bg-red-500 text-white hover:bg-red-600'
+						: ''}"
+					disabled={disabled || isLoading || !hasAudioModality}
+					onclick={onMicClick}
+					type="button"
+					{...props}
+				>
+					<span class="sr-only">{isRecording ? 'Stop recording' : 'Start recording'}</span>
 
-				{#if isRecording}
-					<Square class="h-4 w-4 animate-pulse fill-white" />
-				{:else}
-					<Mic class="h-4 w-4" />
-				{/if}
-			</Button>
+					{#if isRecording}
+						<Square class="h-4 w-4 animate-pulse fill-white" />
+					{:else}
+						<Mic class="h-4 w-4" />
+					{/if}
+				</Button>
+			{/snippet}
 		</Tooltip.Trigger>
 
 		{#if !hasAudioModality}

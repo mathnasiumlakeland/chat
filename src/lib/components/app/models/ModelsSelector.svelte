@@ -76,11 +76,7 @@
 
 	let filteredOptions = $derived(filterModelOptions(options, searchTerm));
 
-	let groupedFilteredOptions = $derived(
-		groupModelOptions(filteredOptions, modelsStore.favoriteModelIds, (m) =>
-			modelsStore.isModelLoaded(m)
-		)
-	);
+	let groupedFilteredOptions = $derived(groupModelOptions(filteredOptions, (m) => modelsStore.isModelLoaded(m)));
 
 	$effect(() => {
 		void searchTerm;
@@ -352,13 +348,11 @@
 								{@const { option, flatIndex } = item}
 								{@const isSelected = currentModel === option.model || activeId === option.id}
 								{@const isHighlighted = flatIndex === highlightedIndex}
-								{@const isFav = modelsStore.favoriteModelIds.has(option.model)}
 
 								<ModelsSelectorOption
 									{option}
 									{isSelected}
 									{isHighlighted}
-									{isFav}
 									{showOrgName}
 									onSelect={handleSelect}
 									onInfoClick={handleInfoClick}

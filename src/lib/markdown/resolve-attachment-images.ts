@@ -1,7 +1,10 @@
 import type { Root as HastRoot } from 'hast';
-import { visit } from 'unist-util-visit';
+import visit from 'unist-util-visit';
+import type { Element } from 'hast';
 import type { DatabaseMessageExtra, DatabaseMessageExtraImageFile } from '$lib/types/database';
 import { AttachmentType, UrlProtocol } from '$lib/enums';
+
+const visitNode = visit as unknown as (...args: unknown[]) => void;
 
 /**
  * Rehype plugin to resolve attachment image sources.
@@ -9,7 +12,7 @@ import { AttachmentType, UrlProtocol } from '$lib/enums';
  */
 export function rehypeResolveAttachmentImages(options: { attachments?: DatabaseMessageExtra[] }) {
 	return (tree: HastRoot) => {
-		visit(tree, 'element', (node) => {
+		visitNode(tree, 'element', (node: Element) => {
 			if (node.tagName === 'img' && node.properties?.src) {
 				const src = String(node.properties.src);
 

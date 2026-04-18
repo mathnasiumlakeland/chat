@@ -8,6 +8,9 @@
 		disabled?: boolean;
 		initialMessage?: string;
 		isLoading?: boolean;
+		modelLoadingLabel?: string | null;
+		modelLoadingProgress?: number;
+		showModelLoadingState?: boolean;
 		onFileRemove?: (fileId: string) => void;
 		onFileUpload?: (files: File[]) => void;
 		onSend?: (message: string, files?: ChatUploadedFile[]) => Promise<boolean>;
@@ -22,6 +25,9 @@
 		disabled = false,
 		initialMessage = '',
 		isLoading = false,
+		modelLoadingLabel = null,
+		modelLoadingProgress = 0,
+		showModelLoadingState = false,
 		onFileRemove,
 		onFileUpload,
 		onSend,
@@ -64,11 +70,6 @@
 		const messageToSend = message.trim();
 		const filesToSend = [...uploadedFiles];
 
-		message = '';
-		uploadedFiles = [];
-
-		chatFormRef?.resetTextareaHeight();
-
 		let success = false;
 		try {
 			success = (await onSend?.(messageToSend, filesToSend)) ?? false;
@@ -76,9 +77,10 @@
 			console.error('Failed to send message:', error);
 		}
 
-		if (!success) {
-			message = messageToSend;
-			uploadedFiles = filesToSend;
+		if (success) {
+			message = '';
+			uploadedFiles = [];
+			chatFormRef?.resetTextareaHeight();
 		}
 	}
 
@@ -105,6 +107,33 @@
 
 		previousIsLoading = isLoading;
 	});
+
+	let clampedModelLoadingProgress = $derived.by(() => {
+		const progress = Number(modelLoadingProgress);
+		if (!Number.isFinite(progress)) {
+			return 0;
+		}
+
+		return Math.max(0, Math.min(progress, 100));
+	});
+
+	let modelLoadingProgressWidth = $derived(
+		showModelLoadingState
+			? `${clampedModelLoadingProgress > 0 ? clampedModelLoadingProgress : 8}%`
+			: '0%'
+	);
+
+	let modelLoadingStatus = $derived.by(() => {
+		if (!showModelLoadingState) {
+			return '';
+		}
+
+		if (clampedModelLoadingProgress > 0) {
+			return `${clampedModelLoadingProgress}%`;
+		}
+
+		return 'Starting...';
+	});
 </script>
 
 <div class="relative mx-auto max-w-[48rem]">
@@ -115,6 +144,7 @@
 		class={className}
 		{disabled}
 		{isLoading}
+		showPendingState={showModelLoadingState}
 		showMcpPromptButton
 		onFilesAdd={handleFilesAdd}
 		{onStop}
@@ -122,6 +152,32 @@
 		onSystemPromptClick={handleSystemPromptClick}
 		onUploadedFileRemove={handleUploadedFileRemove}
 	/>
+
+	{#if showModelLoadingState}
+		<div class="mt-3 px-4">
+			<div class="mb-2 flex items-center justify-between gap-3 text-xs text-muted-foreground">
+				<p class="truncate font-medium text-foreground/80">
+					Loading {modelLoadingLabel ?? 'model'}...
+				</p>
+
+				<span class="shrink-0 font-mono text-[11px] uppercase tracking-[0.08em]">
+					{modelLoadingStatus}
+				</span>
+			</div>
+
+			<div class="h-1 overflow-hidden rounded-full bg-border/80">
+				<div
+					class="h-full rounded-full bg-foreground/70 transition-[width] duration-300 ease-out"
+					class:animate-pulse={clampedModelLoadingProgress === 0}
+					style:width={modelLoadingProgressWidth}
+				></div>
+			</div>
+
+			<p class="mt-2 text-xs text-muted-foreground">
+				Your message will send automatically when the model is ready.
+			</p>
+		</div>
+	{/if}
 </div>
 
-<ChatFormHelperText show={showHelperText} />
+<ChatFormHelperText show={showHelperText && !showModelLoadingState} />

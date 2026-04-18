@@ -2,9 +2,7 @@
 	import {
 		ChatMessageAgenticContent,
 		ChatMessageActions,
-		ChatMessageStatistics,
-		ModelBadge,
-		ModelsSelector
+		ChatMessageStatistics
 	} from '$lib/components/app';
 	import { getMessageEditContext } from '$lib/contexts';
 	import { useProcessingState } from '$lib/hooks/use-processing-state.svelte';
@@ -19,9 +17,6 @@
 	import { MessageRole, KeyboardKey, ChatMessageStatsView } from '$lib/enums';
 	import Label from '$lib/components/ui/label/label.svelte';
 	import { config } from '$lib/stores/settings.svelte';
-	import { isRouterMode } from '$lib/stores/server.svelte';
-	import { modelsStore } from '$lib/stores/models.svelte';
-	import { ServerModelStatus } from '$lib/enums';
 
 	import { hasAgenticContent } from '$lib/utils';
 
@@ -90,10 +85,12 @@
 
 	const isAgentic = $derived(hasAgenticContent(message, toolMessages));
 	const hasReasoning = $derived(!!message.reasoningContent);
-	const processingState = useProcessingState();
+	const processingState = useProcessingState(() => ({
+		conversationId: message.convId,
+		messageId: message.id
+	}));
 
 	let currentConfig = $derived(config());
-	let isRouter = $derived(isRouterMode());
 	let showRawOutput = $state(false);
 	let activeStatsView = $state<ChatMessageStatsView>(ChatMessageStatsView.GENERATION);
 	let statsContainerEl: HTMLDivElement | undefined = $state();
@@ -151,31 +148,61 @@
 			(currentConfig.alwaysShowAgenticTurns || activeStatsView === ChatMessageStatsView.SUMMARY)
 	);
 
-	let displayedModel = $derived(message.model ?? null);
-
-	let isCurrentlyLoading = $derived(isLoading());
-	let isStreaming = $derived(isChatStreaming());
+	let hasActiveGeneration = $derived(isLoading() || isChatStreaming());
+	let currentLiveProcessingState = $derived(processingState.processingState);
 	let hasNoContent = $derived(!message?.content?.trim());
-	let isActivelyProcessing = $derived(isCurrentlyLoading || isStreaming);
+	let isActivelyProcessing = $derived(currentLiveProcessingState !== null);
+	let hasSavedStats = $derived(
+		!!message.timings?.predicted_n && !!message.timings?.predicted_ms
+	);
+	let showStatsInfo = $derived(
+		currentConfig.showMessageStats &&
+			((hasSavedStats && (!isActivelyProcessing || isLastAssistantMessage)) ||
+				(isActivelyProcessing && isLastAssistantMessage))
+	);
 
 	let showProcessingInfoTop = $derived(
 		message?.role === MessageRole.ASSISTANT &&
-			isActivelyProcessing &&
+			(hasActiveGeneration || isActivelyProcessing) &&
 			hasNoContent &&
 			!isAgentic &&
 			isLastAssistantMessage
 	);
 
-	let showProcessingInfoBottom = $derived(
-		message?.role === MessageRole.ASSISTANT &&
-			isActivelyProcessing &&
-			(!hasNoContent || isAgentic) &&
-			isLastAssistantMessage
-	);
+	let currentPromptProgress = $derived(currentLiveProcessingState?.promptProgress ?? null);
+	let showPrefillProgress = $derived.by(() => {
+		if (!currentPromptProgress) {
+			return false;
+		}
 
-	function handleCopyModel() {
-		void copyToClipboard(displayedModel ?? '');
-	}
+		const actualTotal = Math.max((currentPromptProgress.total ?? 0) - (currentPromptProgress.cache ?? 0), 0);
+		const actualProcessed = Math.max(
+			(currentPromptProgress.processed ?? 0) - (currentPromptProgress.cache ?? 0),
+			0
+		);
+
+		return actualTotal > 0 && actualProcessed < actualTotal;
+	});
+	let prefillProgressPercent = $derived.by(() => {
+		if (!showPrefillProgress || !currentPromptProgress) {
+			return 0;
+		}
+
+		const actualTotal = Math.max((currentPromptProgress.total ?? 0) - (currentPromptProgress.cache ?? 0), 0);
+		const actualProcessed = Math.max(
+			(currentPromptProgress.processed ?? 0) - (currentPromptProgress.cache ?? 0),
+			0
+		);
+
+		if (actualTotal <= 0) {
+			return 0;
+		}
+
+		return Math.max(0, Math.min((actualProcessed / actualTotal) * 100, 100));
+	});
+	let prefillProgressWidth = $derived(
+		showPrefillProgress ? `${Math.max(prefillProgressPercent, 4)}%` : '0%'
+	);
 
 	$effect(() => {
 		if (editCtx.isEditing && textareaElement) {
@@ -184,7 +211,7 @@
 	});
 
 	$effect(() => {
-		if (showProcessingInfoTop || showProcessingInfoBottom) {
+		if ((hasActiveGeneration && isLastAssistantMessage) || showProcessingInfoTop || showStatsInfo) {
 			processingState.startMonitoring();
 		}
 	});
@@ -203,6 +230,12 @@
 						processingState.getProcessingMessage() ??
 						'Processing...'}
 				</span>
+
+				{#if showPrefillProgress}
+					<div class="processing-progress-track" aria-hidden="true">
+						<div class="processing-progress-fill" style:width={prefillProgressWidth}></div>
+					</div>
+				{/if}
 			</div>
 		</div>
 	{/if}
@@ -257,7 +290,7 @@
 			<ChatMessageAgenticContent
 				{message}
 				{toolMessages}
-				isStreaming={isChatStreaming()}
+				isStreaming={hasActiveGeneration || isActivelyProcessing}
 				highlightTurns={highlightAgenticTurns}
 			/>
 		{/if}
@@ -267,44 +300,13 @@
 		</div>
 	{/if}
 
-	{#if showProcessingInfoBottom}
-		<div class="mt-4 w-full max-w-[48rem]" in:fade>
-			<div class="processing-container">
-				<span class="processing-text">
-					{processingState.getPromptProgressText() ??
-						processingState.getProcessingMessage() ??
-						'Processing...'}
-				</span>
-			</div>
-		</div>
-	{/if}
-
-	<div class="info my-6 grid gap-4 tabular-nums">
-		{#if displayedModel}
+	{#if showStatsInfo}
+		<div class="info my-6 grid gap-4 tabular-nums">
 			<div
 				bind:this={statsContainerEl}
 				class="inline-flex flex-wrap items-start gap-2 text-xs text-muted-foreground"
 			>
-				{#if isRouter}
-					<ModelsSelector
-						currentModel={displayedModel}
-						disabled={isLoading()}
-						onModelChange={async (modelId, modelName) => {
-							const status = modelsStore.getModelStatus(modelId);
-
-							if (status !== ServerModelStatus.LOADED) {
-								await modelsStore.loadModel(modelId);
-							}
-
-							onRegenerate(modelName);
-							return true;
-						}}
-					/>
-				{:else}
-					<ModelBadge model={displayedModel || undefined} onclick={handleCopyModel} />
-				{/if}
-
-				{#if currentConfig.showMessageStats && message.timings && message.timings.predicted_n && message.timings.predicted_ms}
+				{#if hasSavedStats && (!isActivelyProcessing || isLastAssistantMessage)}
 					{@const agentic = message.timings.agentic}
 					<ChatMessageStatistics
 						promptTokens={agentic ? agentic.llm.prompt_n : message.timings.prompt_n}
@@ -314,7 +316,7 @@
 						agenticTimings={agentic}
 						onActiveViewChange={handleStatsViewChange}
 					/>
-				{:else if isLoading() && currentConfig.showMessageStats}
+				{:else if isActivelyProcessing && isLastAssistantMessage}
 					{@const liveStats = processingState.getLiveProcessingStats()}
 					{@const genStats = processingState.getLiveGenerationStats()}
 					{@const promptProgress = processingState.processingState?.promptProgress}
@@ -333,8 +335,8 @@
 					{/if}
 				{/if}
 			</div>
-		{/if}
-	</div>
+		</div>
+	{/if}
 
 	{#if message.timestamp && !editCtx.isEditing}
 		<ChatMessageActions
@@ -382,6 +384,28 @@
 		animation: shine 1s linear infinite;
 		font-weight: 500;
 		font-size: 0.875rem;
+	}
+
+	.processing-progress-track {
+		width: min(100%, 48rem);
+		height: 3px;
+		border-radius: 999px;
+		overflow: hidden;
+		background: hsl(var(--border) / 0.6);
+	}
+
+	.processing-progress-fill {
+		height: 100%;
+		border-radius: inherit;
+		background: linear-gradient(
+			90deg,
+			hsl(var(--foreground) / 0.45),
+			hsl(var(--foreground) / 0.9),
+			hsl(var(--foreground) / 0.45)
+		);
+		background-size: 200% 100%;
+		animation: shine 1.2s linear infinite;
+		transition: width 160ms ease-out;
 	}
 
 	@keyframes shine {

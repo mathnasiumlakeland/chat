@@ -259,7 +259,7 @@ export { default as DialogChatAttachmentsViewAll } from './DialogChatAttachments
  *   bind:open={showError}
  *   type="server"
  *   message={errorMessage}
- *   contextInfo={{ n_prompt_tokens: 1024, n_ctx: 4096 }}
+ *   contextInfo={{ n_prompt_tokens: 1024, n_ctx: 32768 }}
  * />
  * ```
  */

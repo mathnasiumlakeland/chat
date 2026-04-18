@@ -6,7 +6,7 @@ describe('createInferenceBackend', () => {
 		expect(createInferenceBackend('gguf-wasm').constructor.name).toBe('GgufWasmBackend');
 	});
 
-	it('selects the ONNX WebGPU placeholder backend for future runtimes', () => {
+	it('selects the ONNX WebGPU backend for Transformers.js runtimes', () => {
 		expect(createInferenceBackend('onnx-webgpu').constructor.name).toBe('OnnxWebgpuBackend');
 	});
 });

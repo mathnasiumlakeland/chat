@@ -1,7 +1,8 @@
-import { activeProcessingState } from '$lib/stores/chat.svelte';
+import { processingStateFor } from '$lib/stores/chat.svelte';
 import { config } from '$lib/stores/settings.svelte';
 import { STATS_UNITS } from '$lib/constants';
 import type { ApiProcessingState, LiveProcessingStats, LiveGenerationStats } from '$lib/types';
+import { getProcessingStateScopeKey, type ProcessingStateScope } from '$lib/utils/processing-scope';
 
 export interface UseProcessingStateReturn {
 	readonly processingState: ApiProcessingState | null;
@@ -15,6 +16,8 @@ export interface UseProcessingStateReturn {
 	startMonitoring(): void;
 	stopMonitoring(): void;
 }
+
+type ScopeGetter = () => ProcessingStateScope;
 
 /**
  * useProcessingState - Reactive processing state hook
@@ -32,24 +35,34 @@ export interface UseProcessingStateReturn {
  *
  * @returns Hook interface with processing state and control methods
  */
-export function useProcessingState(): UseProcessingStateReturn {
+export function useProcessingState(getScope: ScopeGetter = () => ({})): UseProcessingStateReturn {
 	let isMonitoring = $state(false);
 	let lastKnownState = $state<ApiProcessingState | null>(null);
 	let lastKnownProcessingStats = $state<LiveProcessingStats | null>(null);
+	let lastKnownScopeKey = $state<string | null>(null);
+	let lastKnownProcessingStatsScopeKey = $state<string | null>(null);
+
+	const scope = $derived.by(() => getScope());
+	const scopeKey = $derived(getProcessingStateScopeKey(scope));
 
 	// Derive processing state reactively from chatStore's direct state
 	const processingState = $derived.by(() => {
 		if (!isMonitoring) {
-			return lastKnownState;
+			return lastKnownScopeKey === scopeKey ? lastKnownState : null;
 		}
-		// Read directly from the reactive state export
-		return activeProcessingState();
+
+		return processingStateFor(scope);
 	});
+
+	function getScopedState(): ApiProcessingState | null {
+		return processingState ?? (lastKnownScopeKey === scopeKey ? lastKnownState : null);
+	}
 
 	// Track last known state for keepStatsVisible functionality
 	$effect(() => {
 		if (processingState && isMonitoring) {
 			lastKnownState = processingState;
+			lastKnownScopeKey = scopeKey;
 		}
 	});
 
@@ -68,6 +81,7 @@ export function useProcessingState(): UseProcessingStateReturn {
 					timeMs: time_ms,
 					tokensPerSecond
 				};
+				lastKnownProcessingStatsScopeKey = scopeKey;
 			}
 		}
 	});
@@ -95,22 +109,25 @@ export function useProcessingState(): UseProcessingStateReturn {
 		if (!currentConfig.keepStatsVisible) {
 			lastKnownState = null;
 			lastKnownProcessingStats = null;
+			lastKnownScopeKey = null;
+			lastKnownProcessingStatsScopeKey = null;
 		}
 	}
 
 	function getProcessingMessage(): string {
-		if (!processingState) {
+		const stateToUse = getScopedState();
+		if (!stateToUse) {
 			return 'Processing...';
 		}
 
-		switch (processingState.status) {
+		switch (stateToUse.status) {
 			case 'initializing':
 				return 'Initializing...';
 			case 'preparing':
-				if (processingState.progressPercent !== undefined) {
-					return `Processing (${processingState.progressPercent}%)`;
+				if (stateToUse.progressPercent !== undefined) {
+					return `Processing prompt (${stateToUse.progressPercent}%)`;
 				}
-				return 'Preparing response...';
+				return 'Processing prompt...';
 			case 'generating':
 				return '';
 			default:
@@ -120,7 +137,7 @@ export function useProcessingState(): UseProcessingStateReturn {
 
 	function getProcessingDetails(): string[] {
 		// Use current processing state or fall back to last known state
-		const stateToUse = processingState || lastKnownState;
+		const stateToUse = getScopedState();
 		if (!stateToUse) {
 			return [];
 		}
@@ -189,7 +206,7 @@ export function useProcessingState(): UseProcessingStateReturn {
 	 * Returns technical details without the progress message (for bottom bar)
 	 */
 	function getTechnicalDetails(): string[] {
-		const stateToUse = processingState || lastKnownState;
+		const stateToUse = getScopedState();
 		if (!stateToUse) {
 			return [];
 		}
@@ -236,7 +253,8 @@ export function useProcessingState(): UseProcessingStateReturn {
 	}
 
 	function shouldShowDetails(): boolean {
-		return processingState !== null && processingState.status !== 'idle';
+		const stateToUse = getScopedState();
+		return stateToUse !== null && stateToUse.status !== 'idle';
 	}
 
 	/**
@@ -284,7 +302,7 @@ export function useProcessingState(): UseProcessingStateReturn {
 		}
 
 		// Return last known stats if promptProgress is no longer available
-		return lastKnownProcessingStats;
+		return lastKnownProcessingStatsScopeKey === scopeKey ? lastKnownProcessingStats : null;
 	}
 
 	/**

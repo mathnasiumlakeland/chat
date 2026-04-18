@@ -32,10 +32,12 @@
 
 {#if isTruncated && showTooltip}
 	<Tooltip.Root>
-		<Tooltip.Trigger class={className}>
-			<span bind:this={textElement} class="block truncate">
-				{text}
-			</span>
+		<Tooltip.Trigger>
+			{#snippet child({ props })}
+				<span bind:this={textElement} class="{className} block truncate" {...props}>
+					{text}
+				</span>
+			{/snippet}
 		</Tooltip.Trigger>
 
 		<Tooltip.Content class="z-[9999]">

@@ -53,6 +53,7 @@
 		disabled?: boolean;
 		isLoading?: boolean;
 		placeholder?: string;
+		showPendingState?: boolean;
 		showMcpPromptButton?: boolean;
 
 		// Event Handlers
@@ -72,6 +73,7 @@
 		disabled = false,
 		isLoading = false,
 		placeholder = 'Type a message...',
+		showPendingState = false,
 		showMcpPromptButton = false,
 		uploadedFiles = $bindable([]),
 		value = $bindable(''),
@@ -575,7 +577,9 @@
 
 	<div
 		class="{INPUT_CLASSES} overflow-hidden rounded-3xl backdrop-blur-md {disabled
-			? 'cursor-not-allowed opacity-60'
+			? showPendingState
+				? 'cursor-progress'
+				: 'cursor-not-allowed opacity-60'
 			: ''}"
 		data-slot="input-area"
 	>

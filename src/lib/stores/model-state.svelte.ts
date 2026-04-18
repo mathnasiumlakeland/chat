@@ -1,5 +1,5 @@
 import { browser } from '$app/environment';
-import { DEFAULT_MODEL_ID } from '$lib/constants/models';
+import { DEFAULT_MODEL_ID, normalizeModelId } from '$lib/constants/models';
 import { databaseService } from '$lib/services/database.service';
 import type { ModelStateRecord } from '$lib/types/models';
 import type { RuntimeInfo } from '$lib/types/runtime';
@@ -31,7 +31,7 @@ class ModelStateStore {
 		const savedRecord = await databaseService.getModelState();
 		const normalizedRecord: ModelStateRecord = {
 			...savedRecord,
-			selectedModelId: savedRecord.selectedModelId ?? DEFAULT_MODEL_ID
+			selectedModelId: normalizeModelId(savedRecord.selectedModelId) ?? DEFAULT_MODEL_ID
 		};
 
 		this.record = normalizedRecord;
@@ -46,9 +46,10 @@ class ModelStateStore {
 
 	async selectModel(modelId: string): Promise<void> {
 		await this.initialize();
+		const normalizedModelId = normalizeModelId(modelId) ?? DEFAULT_MODEL_ID;
 		const nextRecord: ModelStateRecord = {
 			...this.snapshotRecord(),
-			selectedModelId: modelId,
+			selectedModelId: normalizedModelId,
 			lastUsedAt: Date.now(),
 			lastError: null
 		};
@@ -60,14 +61,15 @@ class ModelStateStore {
 
 	async syncConversationModel(modelId: string): Promise<void> {
 		await this.initialize();
+		const normalizedModelId = normalizeModelId(modelId) ?? DEFAULT_MODEL_ID;
 
-		if (this.record.selectedModelId === modelId) {
+		if (this.record.selectedModelId === normalizedModelId) {
 			return;
 		}
 
 		const nextRecord: ModelStateRecord = {
 			...this.snapshotRecord(),
-			selectedModelId: modelId,
+			selectedModelId: normalizedModelId,
 			lastError: null
 		};
 
@@ -105,5 +107,6 @@ export const modelStateStore = new ModelStateStore();
 
 export const selectedModelId = () => modelStateStore.record.selectedModelId;
 export const modelLoadState = () => modelStateStore.record.loadState;
+export const modelLoadProgress = () => modelStateStore.progress;
 export const modelLastError = () => modelStateStore.record.lastError;
 export const modelRuntimeInfo = () => modelStateStore.runtimeInfo;

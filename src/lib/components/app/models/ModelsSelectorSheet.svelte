@@ -75,11 +75,7 @@
 
 	let filteredOptions = $derived(filterModelOptions(options, searchTerm));
 
-	let groupedFilteredOptions = $derived(
-		groupModelOptions(filteredOptions, modelsStore.favoriteModelIds, (m) =>
-			modelsStore.isModelLoaded(m)
-		)
-	);
+	let groupedFilteredOptions = $derived(groupModelOptions(filteredOptions, (m) => modelsStore.isModelLoaded(m)));
 
 	let sheetOpen = $state(false);
 	let showModelDialog = $state(false);

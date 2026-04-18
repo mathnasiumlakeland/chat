@@ -30,18 +30,21 @@
 
 <Tooltip.Root>
 	<Tooltip.Trigger>
-		<Button
-			{variant}
-			{size}
-			{disabled}
-			{onclick}
-			class="h-6 w-6 p-0 {className} flex"
-			aria-label={ariaLabel || tooltip}
-		>
-			{@const IconComponent = icon}
+		{#snippet child({ props })}
+			<Button
+				{variant}
+				{size}
+				{disabled}
+				{onclick}
+				class="h-6 w-6 p-0 {className} flex"
+				aria-label={ariaLabel || tooltip}
+				{...props}
+			>
+				{@const IconComponent = icon}
 
-			<IconComponent class={iconSize} />
-		</Button>
+				<IconComponent class={iconSize} />
+			</Button>
+		{/snippet}
 	</Tooltip.Trigger>
 
 	<Tooltip.Content>

@@ -5,6 +5,19 @@ import type {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MODEL_CATALOG } from '$lib/constants/models';
 
+const ggufModel = {
+	...MODEL_CATALOG[1],
+	id: 'prism-ml/Bonsai-1.7B-gguf',
+	hfRepo: 'prism-ml/Bonsai-1.7B-gguf',
+	hfFilename: 'Bonsai-1.7B.gguf',
+	runtimeKind: 'gguf-wasm',
+	format: 'GGUF Q1_0_g128',
+	cacheSizeBytes: 250_000_000,
+	loadedSizeBytes: 240_000_000,
+	contextTokens: MODEL_CATALOG[0].contextTokens,
+	defaultSampling: MODEL_CATALOG[0].defaultSampling
+} as const;
+
 const runtimeAssets = {
 	runtimeManifest: {
 		asyncifyDiagnostics: '0',
@@ -57,7 +70,7 @@ class MockPrismRawQ1Module {
 
 	getLoadedContextInfo() {
 		return {
-			n_ctx: 4_096
+			n_ctx: ggufModel.contextTokens
 		};
 	}
 }
@@ -125,7 +138,7 @@ describe('GgufWasmBackend', () => {
 		const { GgufWasmBackend } = await import('./gguf-wasm-backend');
 		const backend = new GgufWasmBackend();
 
-		await backend.load(MODEL_CATALOG[0], { contextTokens: MODEL_CATALOG[0].contextTokens });
+		await backend.load(ggufModel, { contextTokens: ggufModel.contextTokens });
 
 		expect(fetch).toHaveBeenCalledWith(
 			'https://huggingface.co/prism-ml/Bonsai-1.7B-gguf/resolve/main/Bonsai-1.7B.gguf'
@@ -133,7 +146,7 @@ describe('GgufWasmBackend', () => {
 		expect(loadModelFromResponse).toHaveBeenCalledWith(
 			expect.any(Response),
 			expect.objectContaining({
-				nCtx: 4_096,
+				nCtx: ggufModel.contextTokens,
 				nBatch: 256,
 				nThreads: 1,
 				nGpuLayers: 999,
@@ -146,18 +159,35 @@ describe('GgufWasmBackend', () => {
 		);
 		expect(backend.getRuntimeInfo()).toMatchObject({
 			runtimeKind: 'gguf-wasm',
-			modelId: MODEL_CATALOG[0].id,
-			contextTokens: 4_096,
+			modelId: ggufModel.id,
+			contextTokens: ggufModel.contextTokens,
 			usesMultithread: false,
 			library: 'Prism raw Asyncify WebGPU (64/128)'
 		});
+	});
+
+	it('caps requested context at the model max while allowing the long-context default', async () => {
+		const { GgufWasmBackend } = await import('./gguf-wasm-backend');
+		const backend = new GgufWasmBackend();
+
+		await backend.load(ggufModel, {
+			contextTokens: ggufModel.contextTokens * 2
+		});
+
+		expect(loadModelFromResponse).toHaveBeenCalledWith(
+			expect.any(Response),
+			expect.objectContaining({
+				nCtx: ggufModel.contextTokens,
+				nBatch: 256
+			})
+		);
 	});
 
 	it('streams visible tokens and unloads the raw runtime cleanly', async () => {
 		const { GgufWasmBackend } = await import('./gguf-wasm-backend');
 		const backend = new GgufWasmBackend();
 
-		await backend.load(MODEL_CATALOG[0], { contextTokens: MODEL_CATALOG[0].contextTokens });
+		await backend.load(ggufModel, { contextTokens: ggufModel.contextTokens });
 
 		const streamedChunks: string[] = [];
 		const text = await backend.complete(
@@ -165,7 +195,7 @@ describe('GgufWasmBackend', () => {
 				{ role: 'assistant', content: '<think>\ninternal\n</think>\nVisible answer' },
 				{ role: 'user', content: 'hello' }
 			],
-			MODEL_CATALOG[0].defaultSampling.sampling,
+			ggufModel.defaultSampling.sampling,
 			{
 				onToken: (chunk) => streamedChunks.push(chunk)
 			}
@@ -175,7 +205,7 @@ describe('GgufWasmBackend', () => {
 		expect(text).toBe('Bonsai');
 		expect(completePrompt).toHaveBeenCalledWith(
 			'<|im_start|>assistant\n<think>\ninternal\n</think>\nVisible answer<|im_end|>\n<|im_start|>user\nhello<|im_end|>\n<|im_start|>assistant\n',
-			MODEL_CATALOG[0].defaultSampling.sampling,
+			ggufModel.defaultSampling.sampling,
 			expect.any(Object),
 			expect.objectContaining({
 				maxTokens: 96,
@@ -193,12 +223,12 @@ describe('GgufWasmBackend', () => {
 		const { GgufWasmBackend } = await import('./gguf-wasm-backend');
 		const backend = new GgufWasmBackend();
 
-		await backend.load(MODEL_CATALOG[0], { contextTokens: MODEL_CATALOG[0].contextTokens });
+		await backend.load(ggufModel, { contextTokens: ggufModel.contextTokens });
 
 		completePrompt.mockRejectedValueOnce(new Error('Mock runtime failure'));
 
 		await expect(
-			backend.complete([{ role: 'user', content: 'hello' }], MODEL_CATALOG[0].defaultSampling.sampling)
+			backend.complete([{ role: 'user', content: 'hello' }], ggufModel.defaultSampling.sampling)
 		).rejects.toThrow('Mock runtime failure');
 	});
 
@@ -206,7 +236,7 @@ describe('GgufWasmBackend', () => {
 		const { GgufWasmBackend } = await import('./gguf-wasm-backend');
 		const backend = new GgufWasmBackend();
 
-		await backend.load(MODEL_CATALOG[0], { contextTokens: MODEL_CATALOG[0].contextTokens });
+		await backend.load(ggufModel, { contextTokens: ggufModel.contextTokens });
 
 		completePrompt.mockImplementationOnce(
 			async (
@@ -231,7 +261,7 @@ describe('GgufWasmBackend', () => {
 
 		const pending = backend.complete(
 			[{ role: 'user', content: 'abort this' }],
-			MODEL_CATALOG[0].defaultSampling.sampling
+			ggufModel.defaultSampling.sampling
 		);
 		backend.abort();
 		await expect(pending).rejects.toThrow(/aborted/i);

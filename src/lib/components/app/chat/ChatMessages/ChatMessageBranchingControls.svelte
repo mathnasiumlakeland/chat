@@ -41,16 +41,19 @@
 	>
 		<Tooltip.Root>
 			<Tooltip.Trigger>
-				<Button
-					aria-label="Previous message version"
-					class="h-5 w-5 p-0 {!hasPrevious ? 'cursor-not-allowed opacity-30' : ''}"
-					disabled={!hasPrevious}
-					onclick={handlePrevious}
-					size="sm"
-					variant="ghost"
-				>
-					<ChevronLeft class="h-3 w-3" />
-				</Button>
+				{#snippet child({ props })}
+					<Button
+						aria-label="Previous message version"
+						class="h-5 w-5 p-0 {!hasPrevious ? 'cursor-not-allowed opacity-30' : ''}"
+						disabled={!hasPrevious}
+						onclick={handlePrevious}
+						size="sm"
+						variant="ghost"
+						{...props}
+					>
+						<ChevronLeft class="h-3 w-3" />
+					</Button>
+				{/snippet}
 			</Tooltip.Trigger>
 
 			<Tooltip.Content>
@@ -64,16 +67,19 @@
 
 		<Tooltip.Root>
 			<Tooltip.Trigger>
-				<Button
-					aria-label="Next message version"
-					class="h-5 w-5 p-0 {!hasNext ? 'cursor-not-allowed opacity-30' : ''}"
-					disabled={!hasNext}
-					onclick={handleNext}
-					size="sm"
-					variant="ghost"
-				>
-					<ChevronRight class="h-3 w-3" />
-				</Button>
+				{#snippet child({ props })}
+					<Button
+						aria-label="Next message version"
+						class="h-5 w-5 p-0 {!hasNext ? 'cursor-not-allowed opacity-30' : ''}"
+						disabled={!hasNext}
+						onclick={handleNext}
+						size="sm"
+						variant="ghost"
+						{...props}
+					>
+						<ChevronRight class="h-3 w-3" />
+					</Button>
+				{/snippet}
 			</Tooltip.Trigger>
 
 			<Tooltip.Content>

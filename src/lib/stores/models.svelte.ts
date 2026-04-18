@@ -1,24 +1,27 @@
-import { browser } from '$app/environment';
-import { MODEL_CATALOG } from '$lib/constants/models';
+import {
+	getModelArtifactPath,
+	getModelCatalogEntry,
+	MODEL_CATALOG,
+	normalizeModelId
+} from '$lib/constants/models';
 import { ModelModality, ServerModelStatus } from '$lib/enums';
 import { chatStore } from '$lib/stores/chat.svelte';
 import { modelStateStore } from '$lib/stores/model-state.svelte';
 import type { ModelCatalogEntry, ModelModalities, ModelOption } from '$lib/types/models';
 import type { ApiLlamaCppServerProps } from '$lib/types';
 
-const FAVORITE_MODELS_LOCALSTORAGE_KEY = 'bonsai-browser-chat.favorite-model-ids';
-
 function toModelOption(entry: ModelCatalogEntry): ModelOption {
 	return {
 		id: entry.id,
 		model: entry.id,
-		name: entry.id.split('/').at(-1) ?? entry.id,
+		name: entry.displayName,
 		description: `${entry.format} · ${Math.round(entry.loadedSizeBytes / 1_000_000)} MB`,
 		capabilities: [],
 		modalities: {
 			vision: false,
 			audio: false
 		},
+		aliases: [entry.displayName],
 		tags: [entry.format]
 	};
 }
@@ -26,8 +29,8 @@ function toModelOption(entry: ModelCatalogEntry): ModelOption {
 function toModelProps(entry: ModelCatalogEntry): ApiLlamaCppServerProps {
 	return {
 		role: 'router',
-		model_path: entry.hfFilename,
-		model_alias: entry.id.split('/').at(-1) ?? entry.id,
+		model_path: getModelArtifactPath(entry),
+		model_alias: entry.displayName,
 		webui: true,
 		modalities: {
 			vision: false,
@@ -55,31 +58,9 @@ class ModelsStore {
 	error = $state<string | null>(null);
 	selectedModelId = $state<string | null>(null);
 	selectedModelName = $state<string | null>(null);
-	favoriteModelIds = $state<Set<string>>(this.loadFavorites());
 	private modelProps = $state<Map<string, ApiLlamaCppServerProps>>(new Map());
 	private modelLoadingStates = $state<Map<string, boolean>>(new Map());
 	private fetchPromise: Promise<void> | null = null;
-
-	private loadFavorites(): Set<string> {
-		if (!browser) return new Set();
-
-		try {
-			const raw = localStorage.getItem(FAVORITE_MODELS_LOCALSTORAGE_KEY);
-			if (!raw) return new Set();
-			const parsed = JSON.parse(raw);
-			return Array.isArray(parsed) ? new Set(parsed) : new Set();
-		} catch {
-			return new Set();
-		}
-	}
-
-	private saveFavorites(): void {
-		if (!browser) return;
-		localStorage.setItem(
-			FAVORITE_MODELS_LOCALSTORAGE_KEY,
-			JSON.stringify(Array.from(this.favoriteModelIds))
-		);
-	}
 
 	private setRouterStatus(modelId: string, status: ServerModelStatus): void {
 		this.routerModels = this.routerModels.map((model) =>
@@ -94,7 +75,7 @@ class ModelsStore {
 	}
 
 	private getCatalogEntry(modelId: string): ModelCatalogEntry | undefined {
-		return MODEL_CATALOG.find((entry) => entry.id === modelId);
+		return getModelCatalogEntry(modelId);
 	}
 
 	get selectedModel(): ModelOption | null {
@@ -136,12 +117,12 @@ class ModelsStore {
 				this.models = MODEL_CATALOG.map(toModelOption);
 				this.routerModels = MODEL_CATALOG.map((entry) => ({
 					id: entry.id,
-					name: entry.id.split('/').at(-1) ?? entry.id,
+					name: entry.displayName,
 					object: 'model',
-					owned_by: 'prism-ml',
+					owned_by: entry.hfRepo.split('/')[0] ?? 'onnx-community',
 					created: Date.now(),
 					in_cache: true,
-					path: entry.hfFilename,
+					path: getModelArtifactPath(entry),
 					meta: {
 						webui: true
 					},
@@ -174,22 +155,25 @@ class ModelsStore {
 	async fetchModalitiesForLoadedModels(): Promise<void> {}
 
 	findModelByName(modelName: string): ModelOption | undefined {
-		return this.models.find((option) => option.model === modelName);
+		const normalizedModelId = normalizeModelId(modelName) ?? modelName;
+		return this.models.find((option) => option.model === normalizedModelId);
 	}
 
 	getModelProps(modelId: string): ApiLlamaCppServerProps | null {
-		return this.modelProps.get(modelId) ?? null;
+		const normalizedModelId = normalizeModelId(modelId) ?? modelId;
+		return this.modelProps.get(normalizedModelId) ?? null;
 	}
 
 	async fetchModelProps(modelId: string): Promise<ApiLlamaCppServerProps | null> {
-		const cached = this.modelProps.get(modelId);
+		const normalizedModelId = normalizeModelId(modelId) ?? modelId;
+		const cached = this.modelProps.get(normalizedModelId);
 		if (cached) return cached;
 
-		const entry = this.getCatalogEntry(modelId);
+		const entry = this.getCatalogEntry(normalizedModelId);
 		if (!entry) return null;
 
 		const props = toModelProps(entry);
-		this.modelProps.set(modelId, props);
+		this.modelProps.set(normalizedModelId, props);
 		return props;
 	}
 
@@ -200,7 +184,10 @@ class ModelsStore {
 	}
 
 	getModelModalities(modelId: string): ModelModalities | null {
-		const option = this.models.find((model) => model.model === modelId || model.id === modelId);
+		const normalizedModelId = normalizeModelId(modelId) ?? modelId;
+		const option = this.models.find(
+			(model) => model.model === normalizedModelId || model.id === normalizedModelId
+		);
 		return option?.modalities ?? { vision: false, audio: false };
 	}
 
@@ -223,22 +210,26 @@ class ModelsStore {
 	}
 
 	isModelLoaded(modelId: string): boolean {
+		const normalizedModelId = normalizeModelId(modelId) ?? modelId;
 		return this.routerModels.some(
-			(model) => model.id === modelId && model.status?.value === ServerModelStatus.LOADED
+			(model) => model.id === normalizedModelId && model.status?.value === ServerModelStatus.LOADED
 		);
 	}
 
 	isModelOperationInProgress(modelId: string): boolean {
-		return this.modelLoadingStates.get(modelId) ?? false;
+		const normalizedModelId = normalizeModelId(modelId) ?? modelId;
+		return this.modelLoadingStates.get(normalizedModelId) ?? false;
 	}
 
 	getModelStatus(modelId: string): ServerModelStatus | null {
-		return this.routerModels.find((model) => model.id === modelId)?.status?.value ?? null;
+		const normalizedModelId = normalizeModelId(modelId) ?? modelId;
+		return this.routerModels.find((model) => model.id === normalizedModelId)?.status?.value ?? null;
 	}
 
 	async selectModelById(modelId: string): Promise<void> {
 		await this.fetch();
-		const option = this.models.find((model) => model.id === modelId);
+		const normalizedModelId = normalizeModelId(modelId) ?? modelId;
+		const option = this.models.find((model) => model.id === normalizedModelId);
 		if (!option) {
 			throw new Error(`Unknown model "${modelId}".`);
 		}
@@ -249,49 +240,45 @@ class ModelsStore {
 	}
 
 	selectModelByName(modelName: string): void {
-		const option = this.models.find((model) => model.model === modelName);
+		const normalizedModelId = normalizeModelId(modelName) ?? modelName;
+		const option = this.models.find((model) => model.model === normalizedModelId);
 		if (!option) return;
 		void this.selectModelById(option.id);
 	}
 
 	async loadModel(modelId: string): Promise<void> {
-		this.modelLoadingStates.set(modelId, true);
-		this.setRouterStatus(modelId, ServerModelStatus.LOADING);
+		const normalizedModelId = normalizeModelId(modelId) ?? modelId;
+		this.modelLoadingStates.set(normalizedModelId, true);
+		this.setRouterStatus(normalizedModelId, ServerModelStatus.LOADING);
 
 		try {
-			await this.selectModelById(modelId);
+			await this.selectModelById(normalizedModelId);
 			await chatStore.ensureLoaded();
 
 			this.routerModels = this.routerModels.map((model) => ({
 				...model,
 				status: {
-					value: model.id === modelId ? ServerModelStatus.LOADED : ServerModelStatus.UNLOADED
+					value:
+						model.id === normalizedModelId
+							? ServerModelStatus.LOADED
+							: ServerModelStatus.UNLOADED
 				}
 			}));
 		} finally {
-			this.modelLoadingStates.delete(modelId);
+			this.modelLoadingStates.delete(normalizedModelId);
 		}
 	}
 
 	async unloadModel(modelId: string): Promise<void> {
-		this.modelLoadingStates.set(modelId, true);
+		const normalizedModelId = normalizeModelId(modelId) ?? modelId;
+		this.modelLoadingStates.set(normalizedModelId, true);
 
 		try {
-			await chatStore.unloadModel(modelId);
-			this.setRouterStatus(modelId, ServerModelStatus.UNLOADED);
+			await chatStore.unloadModel(normalizedModelId);
+			this.setRouterStatus(normalizedModelId, ServerModelStatus.UNLOADED);
 		} finally {
-			this.modelLoadingStates.delete(modelId);
+			this.modelLoadingStates.delete(normalizedModelId);
 		}
-	}
-
-	toggleFavorite(modelId: string): void {
-		const next = new Set(this.favoriteModelIds);
-
-		if (next.has(modelId)) next.delete(modelId);
-		else next.add(modelId);
-
-		this.favoriteModelIds = next;
-		this.saveFavorites();
 	}
 }
 

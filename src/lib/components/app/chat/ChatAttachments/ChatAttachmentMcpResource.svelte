@@ -31,38 +31,41 @@
 
 <Tooltip.Root>
 	<Tooltip.Trigger>
-		<button
-			type="button"
-			class={cn(
-				'flex flex-shrink-0 items-center gap-1.5 rounded-md border px-2 py-0.75 text-sm transition-colors',
-				getStatusClass(attachment),
-				onClick && 'cursor-pointer hover:bg-muted/50',
-				className
-			)}
-			onclick={onClick}
-			disabled={!onClick}
-		>
-			{#if attachment.loading}
-				<Loader2 class="h-3 w-3 animate-spin text-muted-foreground" />
-			{:else if attachment.error}
-				<AlertCircle class="h-3 w-3 text-red-500" />
-			{:else}
-				<ResourceIcon class="h-3 w-3 text-muted-foreground" />
-			{/if}
+		{#snippet child({ props })}
+			<button
+				type="button"
+				class={cn(
+					'flex flex-shrink-0 items-center gap-1.5 rounded-md border px-2 py-0.75 text-sm transition-colors',
+					getStatusClass(attachment),
+					onClick && 'cursor-pointer hover:bg-muted/50',
+					className
+				)}
+				onclick={onClick}
+				disabled={!onClick}
+				{...props}
+			>
+				{#if attachment.loading}
+					<Loader2 class="h-3 w-3 animate-spin text-muted-foreground" />
+				{:else if attachment.error}
+					<AlertCircle class="h-3 w-3 text-red-500" />
+				{:else}
+					<ResourceIcon class="h-3 w-3 text-muted-foreground" />
+				{/if}
 
-			<span class="max-w-[150px] truncate text-xs">
-				{getResourceDisplayName(attachment.resource)}
-			</span>
+				<span class="max-w-[150px] truncate text-xs">
+					{getResourceDisplayName(attachment.resource)}
+				</span>
 
-			{#if onRemove}
-				<ActionIconRemove
-					class="-my-2 -mr-1.5 bg-transparent"
-					iconSize={2}
-					id={attachment.id}
-					{onRemove}
-				/>
-			{/if}
-		</button>
+				{#if onRemove}
+					<ActionIconRemove
+						class="-my-2 -mr-1.5 bg-transparent"
+						iconSize={2}
+						id={attachment.id}
+						{onRemove}
+					/>
+				{/if}
+			</button>
+		{/snippet}
 	</Tooltip.Trigger>
 
 	<Tooltip.Content>

@@ -28,11 +28,10 @@
 
 	let healthState = $derived<HealthCheckState>(mcpStore.getHealthCheckState(server.id));
 	let displayName = $derived(mcpStore.getServerLabel(server));
-	let isIdle = $derived(healthState.status === HealthCheckStatus.IDLE);
 	let isHealthChecking = $derived(healthState.status === HealthCheckStatus.CONNECTING);
 	let isConnected = $derived(healthState.status === HealthCheckStatus.SUCCESS);
 	let isError = $derived(healthState.status === HealthCheckStatus.ERROR);
-	let showSkeleton = $derived(isIdle || isHealthChecking);
+	let showSkeleton = $derived(isHealthChecking);
 	let errorMessage = $derived(
 		healthState.status === HealthCheckStatus.ERROR ? healthState.message : undefined
 	);

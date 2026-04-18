@@ -114,35 +114,41 @@
 			{#if depth > 0}
 				<Tooltip.Root>
 					<Tooltip.Trigger>
-						<a
-							href={resolve('/chat/[id]', { id: conversation.forkedFromConversationId ?? '' })}
-							class="flex shrink-0 items-center text-muted-foreground transition-colors hover:text-foreground"
-						>
-							<GitBranch class="h-3.5 w-3.5" />
-						</a>
+						{#snippet child({ props })}
+							<a
+								href={resolve('/chat/[id]', { id: conversation.forkedFromConversationId ?? '' })}
+								class="flex shrink-0 items-center text-muted-foreground transition-colors hover:text-foreground"
+								{...props}
+							>
+								<GitBranch class="h-3.5 w-3.5" />
+							</a>
+						{/snippet}
 					</Tooltip.Trigger>
 
-				<Tooltip.Content>
-					<p>See parent conversation</p>
-				</Tooltip.Content>
-			</Tooltip.Root>
-		{/if}
+					<Tooltip.Content>
+						<p>See parent conversation</p>
+					</Tooltip.Content>
+				</Tooltip.Root>
+			{/if}
 
 		{#if isLoading}
 			<Tooltip.Root>
 				<Tooltip.Trigger>
-					<div
-						class="stop-button flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
-						onclick={handleStop}
-						onkeydown={(e) => e.key === 'Enter' && handleStop(e)}
-						role="button"
-						tabindex="0"
-						aria-label="Stop generation"
-					>
-						<Loader2 class="loading-icon h-3.5 w-3.5 animate-spin" />
+					{#snippet child({ props })}
+						<div
+							class="stop-button flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
+							onclick={handleStop}
+							onkeydown={(e) => e.key === 'Enter' && handleStop(e)}
+							role="button"
+							tabindex="0"
+							aria-label="Stop generation"
+							{...props}
+						>
+							<Loader2 class="loading-icon h-3.5 w-3.5 animate-spin" />
 
-						<Square class="stop-icon hidden h-3 w-3 fill-current text-destructive" />
-					</div>
+							<Square class="stop-icon hidden h-3 w-3 fill-current text-destructive" />
+						</div>
+					{/snippet}
 				</Tooltip.Trigger>
 
 				<Tooltip.Content>

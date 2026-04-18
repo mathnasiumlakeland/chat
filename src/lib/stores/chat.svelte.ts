@@ -1,18 +1,33 @@
 import { goto } from '$app/navigation';
-import { DEFAULT_MODEL_ID, MODEL_CATALOG } from '$lib/constants/models';
+import { resolve } from '$app/paths';
+import { DEFAULT_MODEL_ID, getModelCatalogEntry, MODEL_CATALOG } from '$lib/constants/models';
 import { SYSTEM_MESSAGE_PLACEHOLDER } from '$lib/constants';
-import { ErrorDialogType } from '$lib/enums';
+import { ErrorDialogType, MessageRole, MessageType, ToolCallType } from '$lib/enums';
 import { createInferenceBackend } from '$lib/runtime/create-inference-backend';
 import type { InferenceBackend } from '$lib/runtime/inference-backend';
+import {
+	buildMcpAgenticSystemPrompt,
+	buildToolResultContext,
+	parseMcpAgenticDecision,
+	parseMcpAgenticJsonObject
+} from '$lib/runtime/mcp-agentic';
 import { databaseService, DatabaseService } from '$lib/services/database.service';
 import { conversationsStore } from '$lib/stores/conversations.svelte';
+import { mcpStore } from '$lib/stores/mcp.svelte';
 import { modelStateStore, selectedModelId } from '$lib/stores/model-state.svelte';
+import { config } from '$lib/stores/settings.svelte';
 import type { ErrorDialogState } from '$lib/types/chat';
-import type { RuntimeKind, SamplingConfig } from '$lib/types/runtime';
-import { findDescendantMessages, findLeafNode } from '$lib/utils';
+import type { ApiChatCompletionToolCall } from '$lib/types/api';
+import type { InferenceCompletionOptions, InferenceMessage, RuntimeKind, SamplingConfig } from '$lib/types/runtime';
+import { findDescendantMessages, findLeafNode, findMessageById } from '$lib/utils';
 import { trimConversationTitle } from '$lib/utils/format';
 import { splitLeadingThinkBlock } from '$lib/utils/reasoning';
 import { calculateTokensPerSecond, estimateDisplayedTokenCount } from '$lib/utils/generation-stats';
+import {
+	type ProcessingStateOwner,
+	type ProcessingStateScope,
+	matchesProcessingStateOwner
+} from '$lib/utils/processing-scope';
 import { SvelteSet } from 'svelte/reactivity';
 
 function getSelectedModelOrThrow(modelId: string | null = selectedModelId()) {
@@ -20,12 +35,164 @@ function getSelectedModelOrThrow(modelId: string | null = selectedModelId()) {
 		throw new Error('Select a model before sending a message.');
 	}
 
-	const model = MODEL_CATALOG.find((entry) => entry.id === modelId);
+	const model = getModelCatalogEntry(modelId);
 	if (!model) {
 		throw new Error(`Unknown model "${modelId}".`);
 	}
 
 	return model;
+}
+
+function createAbortError(): Error {
+	try {
+		return new DOMException('Aborted', 'AbortError');
+	} catch {
+		const error = new Error('Aborted');
+		error.name = 'AbortError';
+		return error;
+	}
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+	if (signal?.aborted) {
+		throw createAbortError();
+	}
+}
+
+function prependSystemInstruction(
+	messages: InferenceMessage[],
+	instruction: string
+): InferenceMessage[] {
+	if (messages[0]?.role === 'system') {
+		return [
+			{
+				...messages[0],
+				content: `${instruction}\n\n${messages[0].content}`
+			},
+			...messages.slice(1)
+		];
+	}
+
+	return [
+		{
+			role: 'system',
+			content: instruction
+		},
+		...messages
+	];
+}
+
+function requiresLiveSqlQuery(messages: InferenceMessage[], toolNames: string[]): boolean {
+	if (!toolNames.some((toolName) => toolName === 'sql_query' || toolName.endsWith('__sql_query'))) {
+		return false;
+	}
+
+	const lastUserMessage = [...messages].reverse().find((message) => message.role === 'user')?.content ?? '';
+	return /\b(how many|count|number of|total|average|avg|sum|max|min|latest|top)\b/i.test(
+		lastUserMessage
+	);
+}
+
+const INVALID_MCP_PLANNER_RESPONSE =
+	'Your previous response was invalid. Return exactly one JSON object and no surrounding prose. Use either {"mode":"tool","name":"tool_name","arguments":{...}} or {"mode":"answer","answer":"..."}.' as const;
+
+const SQL_QUERY_PLAN_PROMPT = [
+	'You are preparing arguments for the MCP sql_query tool.',
+	'Return exactly one JSON object and no surrounding prose.',
+	'Use this shape: {"sql":"SELECT ...","max_rows":200}.',
+	'Write a single read-only SQLite query that answers the user.',
+	'Only SELECT or WITH queries are allowed.',
+	'Do not answer the user yet.'
+].join('\n\n');
+
+const SQL_QUERY_REPAIR_PROMPT = [
+	'The previous SQL query failed.',
+	'Return exactly one corrected JSON object for the sql_query tool.',
+	'Do not answer the user yet.'
+].join('\n\n');
+
+const SQL_QUERY_ANSWER_PROMPT = [
+	'You already have the tool result needed to answer the user.',
+	'Answer the latest user request directly using only the tool result.',
+	'Honor formatting requests like "just the number".',
+	'Do not mention tool calls unless the user explicitly asks.'
+].join('\n\n');
+
+function createAgenticPlanningSampling(sampling: SamplingConfig): SamplingConfig {
+	return {
+		...sampling,
+		temp: 0,
+		top_p: 1,
+		top_k: 0,
+		penalty_repeat: 1
+	};
+}
+
+function resolveAgenticPredictTokens(requestedPredictTokens?: number): number {
+	const fallbackPredictTokens = requestedPredictTokens ?? 256;
+
+	if (!Number.isFinite(fallbackPredictTokens)) {
+		return 256;
+	}
+
+	return Math.max(64, Math.min(Math.floor(fallbackPredictTokens), 256));
+}
+
+function findToolName(toolNames: string[], suffix: string): string | null {
+	return toolNames.find((toolName) => toolName === suffix || toolName.endsWith(`__${suffix}`)) ?? null;
+}
+
+function parseSqlQueryArguments(response: string): Record<string, unknown> | null {
+	const parsed = parseMcpAgenticJsonObject(response);
+	if (!parsed) {
+		return null;
+	}
+
+	const sql = typeof parsed.sql === 'string' ? parsed.sql.trim() : '';
+	if (!sql) {
+		return null;
+	}
+
+	const argumentsRecord: Record<string, unknown> = {
+		sql
+	};
+	const maxRows = parsed.max_rows;
+	if (typeof maxRows === 'number' && Number.isFinite(maxRows)) {
+		argumentsRecord.max_rows = Math.max(1, Math.min(Math.floor(maxRows), 200));
+	}
+
+	return argumentsRecord;
+}
+
+type AgenticFlowState = {
+	currentAssistantMessage: DatabaseMessage;
+};
+
+type AgenticFlowResult = {
+	finalAssistantMessage: DatabaseMessage;
+	response: string;
+};
+
+function createToolCallId(): string {
+	if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+		return crypto.randomUUID();
+	}
+
+	return `tool_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function createToolCallPayload(
+	toolName: string,
+	argumentsRecord: Record<string, unknown>
+): ApiChatCompletionToolCall {
+	return {
+		id: createToolCallId(),
+		type: ToolCallType.FUNCTION,
+		function: {
+			name: toolName,
+			arguments: JSON.stringify(argumentsRecord)
+		}
+	};
 }
 
 class ChatStore {
@@ -38,10 +205,14 @@ class ChatStore {
 	abortController = $state<AbortController | null>(null);
 	errorDialogState = $state<ErrorDialogState | null>(null);
 	activeProcessingState = $state<ApiProcessingState | null>(null);
+	activeProcessingOwner = $state.raw<ProcessingStateOwner>({
+		conversationId: null,
+		messageId: null
+	});
 	pendingEditMessageId = $state<string | null>(null);
 	private loadingChats = $state.raw<SvelteSet<string>>(new SvelteSet());
-	private activeConversationId = $state<string | null>(null);
 	isEditModeActive = $state(false);
+	isPreparingNewChat = $state(false);
 	private addFilesHandler = $state<((files: File[]) => void) | null>(null);
 	private pendingDraftMessage = $state('');
 	private pendingDraftFiles = $state<ChatUploadedFile[]>([]);
@@ -67,13 +238,17 @@ class ChatStore {
 
 	private setGenerationState(
 		conversationId: string,
+		assistantMessageId: string,
 		outputTokensUsed: number,
 		outputTokensMax: number,
 		contextTotal: number,
 		sampling: SamplingConfig,
 		elapsedMs: number
 	): void {
-		this.activeConversationId = conversationId;
+		this.activeProcessingOwner = {
+			conversationId,
+			messageId: assistantMessageId
+		};
 		this.activeProcessingState = {
 			status: 'generating',
 			tokensDecoded: outputTokensUsed,
@@ -91,12 +266,45 @@ class ChatStore {
 		} as ApiProcessingState;
 	}
 
+	private setPreparingState(
+		conversationId: string,
+		assistantMessageId: string,
+		outputTokensUsed: number,
+		outputTokensMax: number,
+		contextTotal: number,
+		sampling: SamplingConfig
+	): void {
+		this.activeProcessingOwner = {
+			conversationId,
+			messageId: assistantMessageId
+		};
+		this.activeProcessingState = {
+			status: 'preparing',
+			tokensDecoded: outputTokensUsed,
+			tokensRemaining: outputTokensMax > 0 ? Math.max(outputTokensMax - outputTokensUsed, 0) : 0,
+			progressPercent: undefined,
+			contextUsed: conversationsStore.getInferenceMessages().length,
+			contextTotal,
+			outputTokensUsed,
+			outputTokensMax,
+			temperature: sampling.temp,
+			topP: sampling.top_p,
+			hasNextToken: true,
+			tokensPerSecond: undefined,
+			speculative: false
+		} as ApiProcessingState;
+	}
+
 	private getNowMs(): number {
 		return typeof performance !== 'undefined' ? performance.now() : Date.now();
 	}
 
 	private clearGenerationState(): void {
 		this.activeProcessingState = null;
+		this.activeProcessingOwner = {
+			conversationId: null,
+			messageId: null
+		};
 	}
 
 	private scheduleAfterNextPaint(callback: () => void): void {
@@ -127,7 +335,7 @@ class ChatStore {
 		});
 	}
 
-	setBackend(backend: InferenceBackend, runtimeKind: RuntimeKind = 'gguf-wasm'): void {
+	setBackend(backend: InferenceBackend, runtimeKind: RuntimeKind = 'onnx-webgpu'): void {
 		this.backend = backend;
 		this.backendRuntimeKind = runtimeKind;
 		this.loadedModelId = null;
@@ -223,6 +431,456 @@ class ChatStore {
 		await modelStateStore.setLoadState('idle');
 	}
 
+	private async persistAgenticToolCall(
+		assistantMessage: DatabaseMessage,
+		toolCall: ApiChatCompletionToolCall,
+		modelId: string
+	): Promise<void> {
+		const serializedToolCalls = JSON.stringify([toolCall]);
+
+		await conversationsStore.persistMessage(assistantMessage.id, {
+			content: assistantMessage.content,
+			status: 'done',
+			error: undefined,
+			model: modelId,
+			toolCalls: serializedToolCalls
+		});
+
+		assistantMessage.toolCalls = serializedToolCalls;
+		assistantMessage.status = 'done';
+		assistantMessage.model = modelId;
+	}
+
+	private async createAgenticToolResultMessage(
+		conversationId: string,
+		assistantMessage: DatabaseMessage,
+		toolCallId: string,
+		content: string,
+		modelId: string,
+		isError = false
+	): Promise<DatabaseMessage> {
+		const toolMessage = (await DatabaseService.createMessageBranch(
+			{
+				convId: conversationId,
+				type: MessageType.TEXT,
+				timestamp: Date.now(),
+				role: MessageRole.TOOL,
+				content,
+				status: isError ? 'error' : 'done',
+				model: modelId,
+				toolCallId,
+				toolCalls: ''
+			},
+			assistantMessage.id
+		)) as DatabaseMessage;
+
+		conversationsStore.addMessageToActive(toolMessage);
+		await conversationsStore.updateCurrentNode(toolMessage.id);
+		return toolMessage;
+	}
+
+	private async createAgenticAssistantMessage(
+		conversationId: string,
+		parentId: string,
+		modelId: string
+	): Promise<DatabaseMessage> {
+		const assistantMessage = (await DatabaseService.createMessageBranch(
+			{
+				convId: conversationId,
+				type: MessageType.TEXT,
+				timestamp: Date.now() + 1,
+				role: MessageRole.ASSISTANT,
+				content: '',
+				status: 'streaming',
+				model: modelId,
+				toolCalls: ''
+			},
+			parentId
+		)) as DatabaseMessage;
+
+		conversationsStore.addMessageToActive(assistantMessage);
+		await conversationsStore.updateCurrentNode(assistantMessage.id);
+		return assistantMessage;
+	}
+
+	private async finalizeAgenticAssistantMessage(
+		assistantMessage: DatabaseMessage,
+		content: string,
+		modelId: string,
+		status: DatabaseMessage['status'] = 'done',
+		error?: string
+	): Promise<void> {
+		await conversationsStore.persistMessage(assistantMessage.id, {
+			content,
+			status,
+			error,
+			model: modelId
+		});
+
+		assistantMessage.content = content;
+		assistantMessage.status = status;
+		assistantMessage.error = error;
+		assistantMessage.model = modelId;
+	}
+
+	private async completeWithForcedSqlQuery(
+		backend: InferenceBackend,
+		conversationId: string,
+		messages: InferenceMessage[],
+		sampling: SamplingConfig,
+		options: InferenceCompletionOptions,
+		toolNames: string[],
+		flowState: AgenticFlowState,
+		modelId: string,
+		perChatOverrides = conversationsStore.getAllMcpServerOverrides()
+	): Promise<AgenticFlowResult | null> {
+		const sqlQueryToolName = findToolName(toolNames, 'sql_query');
+		if (!sqlQueryToolName) {
+			return null;
+		}
+
+		const schemaOverviewToolName = findToolName(toolNames, 'schema_overview');
+		const plannerSampling = createAgenticPlanningSampling(sampling);
+		const plannerOptions = {
+			...options,
+			nPredict: resolveAgenticPredictTokens(options.nPredict)
+		};
+		const sqlPlanningContext = [...messages];
+
+		if (schemaOverviewToolName) {
+			throwIfAborted(options.abortSignal);
+			const schemaOverviewResult = await mcpStore.callTool(
+				schemaOverviewToolName,
+				{},
+				perChatOverrides
+			);
+
+			if (!schemaOverviewResult.isError) {
+				sqlPlanningContext.push({
+					role: 'user',
+					content: buildToolResultContext(schemaOverviewToolName, schemaOverviewResult)
+				});
+			}
+		}
+
+		let workingMessages = prependSystemInstruction(sqlPlanningContext, SQL_QUERY_PLAN_PROMPT);
+		let lastToolErrorContent = '';
+		let hasExecutedVisibleTool = false;
+
+		for (let attempt = 0; attempt < 3; attempt += 1) {
+			throwIfAborted(options.abortSignal);
+
+			const sqlPlanResponse = await backend.complete(workingMessages, plannerSampling, {}, plannerOptions);
+			const sqlArguments = parseSqlQueryArguments(sqlPlanResponse);
+
+			if (!sqlArguments) {
+				workingMessages = [
+					...workingMessages,
+					{
+						role: 'system',
+						content:
+							'Your previous response was invalid. Return only JSON for sql_query using {"sql":"SELECT ...","max_rows":200}.'
+					}
+				];
+				continue;
+			}
+
+			const toolCall = createToolCallPayload(sqlQueryToolName, sqlArguments);
+			await this.persistAgenticToolCall(flowState.currentAssistantMessage, toolCall, modelId);
+
+			const sqlResult = await mcpStore.callTool(sqlQueryToolName, sqlArguments, perChatOverrides);
+			hasExecutedVisibleTool = true;
+			const toolResultMessage = await this.createAgenticToolResultMessage(
+				conversationId,
+				flowState.currentAssistantMessage,
+				toolCall.id ?? createToolCallId(),
+				sqlResult.content,
+				modelId,
+				sqlResult.isError
+			);
+			if (sqlResult.isError) {
+				lastToolErrorContent = sqlResult.content;
+				flowState.currentAssistantMessage = await this.createAgenticAssistantMessage(
+					conversationId,
+					toolResultMessage.id,
+					modelId
+				);
+				workingMessages = [
+					...workingMessages,
+					{
+						role: 'assistant',
+						content: JSON.stringify(sqlArguments, null, 2)
+					},
+					{
+						role: 'user',
+						content: buildToolResultContext(sqlQueryToolName, sqlResult)
+					},
+					{
+						role: 'system',
+						content: SQL_QUERY_REPAIR_PROMPT
+					}
+				];
+				continue;
+			}
+
+			flowState.currentAssistantMessage = await this.createAgenticAssistantMessage(
+				conversationId,
+				toolResultMessage.id,
+				modelId
+			);
+
+			throwIfAborted(options.abortSignal);
+
+			const answerResponse = await backend.complete(
+				prependSystemInstruction(
+					[
+						...messages,
+						{
+							role: 'user',
+							content: buildToolResultContext(sqlQueryToolName, sqlResult)
+						}
+					],
+					SQL_QUERY_ANSWER_PROMPT
+				),
+				sampling,
+				{},
+				options
+			);
+
+			const answerDecision = parseMcpAgenticDecision(answerResponse);
+			const response =
+				answerDecision?.mode === 'answer'
+					? answerDecision.answer.trim()
+					: answerResponse.trim();
+
+			await this.finalizeAgenticAssistantMessage(
+				flowState.currentAssistantMessage,
+				response,
+				modelId
+			);
+			return {
+				finalAssistantMessage: flowState.currentAssistantMessage,
+				response
+			};
+		}
+
+		if (hasExecutedVisibleTool) {
+			const response =
+				lastToolErrorContent.trim() || 'The sql_query MCP tool could not complete successfully.';
+			await this.finalizeAgenticAssistantMessage(
+				flowState.currentAssistantMessage,
+				response,
+				modelId,
+				'error',
+				response
+			);
+			return {
+				finalAssistantMessage: flowState.currentAssistantMessage,
+				response
+			};
+		}
+
+		return null;
+	}
+
+	private async completeWithMcpTools(
+		backend: InferenceBackend,
+		conversationId: string,
+		messages: InferenceMessage[],
+		sampling: SamplingConfig,
+		options: InferenceCompletionOptions,
+		flowState: AgenticFlowState,
+		modelId: string,
+		perChatOverrides = conversationsStore.getAllMcpServerOverrides()
+	): Promise<AgenticFlowResult> {
+		const toolDefinitions = mcpStore.getOpenAIToolDefinitions(perChatOverrides);
+		if (toolDefinitions.length === 0) {
+			const response = await backend.complete(messages, sampling, {}, options);
+			await this.finalizeAgenticAssistantMessage(
+				flowState.currentAssistantMessage,
+				response,
+				modelId
+			);
+			return {
+				finalAssistantMessage: flowState.currentAssistantMessage,
+				response
+			};
+		}
+
+		const plannerPrompt = buildMcpAgenticSystemPrompt(
+			toolDefinitions,
+			mcpStore.getAgenticInstructions(perChatOverrides)
+		);
+		let workingMessages = prependSystemInstruction(messages, plannerPrompt);
+		const availableToolNames = toolDefinitions.map((tool) => tool.function.name);
+		const mustUseSqlQuery = requiresLiveSqlQuery(messages, availableToolNames);
+		const plannerSampling = createAgenticPlanningSampling(sampling);
+		const plannerOptions = {
+			...options,
+			nPredict: resolveAgenticPredictTokens(options.nPredict)
+		};
+		let executedToolNames: string[] = [];
+		let invalidPlannerResponses = 0;
+		const configuredMaxTurns = Number(config().agenticMaxTurns);
+		const maxTurns = Number.isFinite(configuredMaxTurns)
+			? Math.max(1, Math.floor(configuredMaxTurns))
+			: 10;
+
+		if (mustUseSqlQuery) {
+			const forcedSqlResponse = await this.completeWithForcedSqlQuery(
+				backend,
+				conversationId,
+				messages,
+				sampling,
+				options,
+				availableToolNames,
+				flowState,
+				modelId,
+				perChatOverrides
+			);
+			if (forcedSqlResponse) {
+				return forcedSqlResponse;
+			}
+		}
+
+		for (let turn = 0; turn < maxTurns; turn += 1) {
+			throwIfAborted(options.abortSignal);
+
+			const plannerResponse = await backend.complete(
+				workingMessages,
+				plannerSampling,
+				{},
+				plannerOptions
+			);
+			const decision = parseMcpAgenticDecision(plannerResponse);
+
+			if (!decision) {
+				invalidPlannerResponses += 1;
+				if (invalidPlannerResponses >= 2) {
+					const response = plannerResponse.trim();
+					await this.finalizeAgenticAssistantMessage(
+						flowState.currentAssistantMessage,
+						response,
+						modelId
+					);
+					return {
+						finalAssistantMessage: flowState.currentAssistantMessage,
+						response
+					};
+				}
+
+				workingMessages = [
+					...workingMessages,
+					{
+						role: 'system',
+						content: INVALID_MCP_PLANNER_RESPONSE
+					}
+				];
+				continue;
+			}
+			invalidPlannerResponses = 0;
+
+			if (decision.mode === 'answer') {
+				if (
+					mustUseSqlQuery &&
+					!executedToolNames.some(
+						(toolName) => toolName === 'sql_query' || toolName.endsWith('__sql_query')
+					)
+				) {
+					workingMessages = [
+						...workingMessages,
+						{
+							role: 'system',
+							content:
+								'The user asked for a live database count or aggregate. You must call sql_query before answering.'
+						}
+					];
+					continue;
+				}
+
+				const response = decision.answer.trim();
+				await this.finalizeAgenticAssistantMessage(
+					flowState.currentAssistantMessage,
+					response,
+					modelId
+				);
+				return {
+					finalAssistantMessage: flowState.currentAssistantMessage,
+					response
+				};
+			}
+
+			const toolCall = createToolCallPayload(decision.name, decision.arguments);
+			await this.persistAgenticToolCall(flowState.currentAssistantMessage, toolCall, modelId);
+
+			const toolResult = await mcpStore.callTool(
+				decision.name,
+				decision.arguments,
+				perChatOverrides
+			);
+			executedToolNames = [...executedToolNames, decision.name];
+			const toolResultMessage = await this.createAgenticToolResultMessage(
+				conversationId,
+				flowState.currentAssistantMessage,
+				toolCall.id ?? createToolCallId(),
+				toolResult.content,
+				modelId,
+				toolResult.isError
+			);
+
+			workingMessages = [
+				...workingMessages,
+				{
+					role: 'assistant',
+					content: JSON.stringify(
+						{
+							mode: 'tool',
+							name: decision.name,
+							arguments: decision.arguments
+						},
+						null,
+						2
+					)
+				},
+				{
+					role: 'user',
+					content: buildToolResultContext(decision.name, toolResult)
+				}
+			];
+
+			flowState.currentAssistantMessage = await this.createAgenticAssistantMessage(
+				conversationId,
+				toolResultMessage.id,
+				modelId
+			);
+		}
+
+		throwIfAborted(options.abortSignal);
+
+		const finalResponse = await backend.complete(
+			[
+				...workingMessages,
+				{
+					role: 'system',
+					content:
+						'You have reached the tool-call limit. Respond with {"mode":"answer","answer":"..."} using only the tool results already gathered.'
+				}
+			],
+			plannerSampling,
+			{},
+			plannerOptions
+		);
+		const finalDecision = parseMcpAgenticDecision(finalResponse);
+
+		const response =
+			finalDecision?.mode === 'answer' ? finalDecision.answer.trim() : finalResponse.trim();
+		await this.finalizeAgenticAssistantMessage(flowState.currentAssistantMessage, response, modelId);
+		return {
+			finalAssistantMessage: flowState.currentAssistantMessage,
+			response
+		};
+	}
+
 	private async runAssistantCompletion(
 		conversationId: string,
 		assistantMessage: DatabaseMessage,
@@ -238,14 +896,26 @@ class ChatStore {
 		this.markChatLoading(conversationId, true);
 		const generationStartedAt = this.getNowMs();
 		let outputTokenCount = estimateDisplayedTokenCount(prefix);
-		this.setGenerationState(
-			conversationId,
-			outputTokenCount,
-			model.defaultSampling.nPredict,
-			model.contextTokens,
-			model.defaultSampling.sampling,
-			0
-		);
+		if (outputTokenCount > 0) {
+			this.setGenerationState(
+				conversationId,
+				assistantMessage.id,
+				outputTokenCount,
+				model.defaultSampling.nPredict,
+				model.contextTokens,
+				model.defaultSampling.sampling,
+				0
+			);
+		} else {
+			this.setPreparingState(
+				conversationId,
+				assistantMessage.id,
+				outputTokenCount,
+				model.defaultSampling.nPredict,
+				model.contextTokens,
+				model.defaultSampling.sampling
+			);
+		}
 		let scheduledFlushId: number | ReturnType<typeof setTimeout> | null = null;
 		let flushUsesTimeout = false;
 
@@ -259,14 +929,26 @@ class ChatStore {
 				thinking: parsedResponse.thinking,
 				status: 'streaming'
 			});
-			this.setGenerationState(
-				conversationId,
-				outputTokenCount,
-				model.defaultSampling.nPredict,
-				model.contextTokens,
-				model.defaultSampling.sampling,
-				this.getNowMs() - generationStartedAt
-			);
+			if (outputTokenCount > 0) {
+				this.setGenerationState(
+					conversationId,
+					assistantMessage.id,
+					outputTokenCount,
+					model.defaultSampling.nPredict,
+					model.contextTokens,
+					model.defaultSampling.sampling,
+					this.getNowMs() - generationStartedAt
+				);
+			} else {
+				this.setPreparingState(
+					conversationId,
+					assistantMessage.id,
+					outputTokenCount,
+					model.defaultSampling.nPredict,
+					model.contextTokens,
+					model.defaultSampling.sampling
+				);
+			}
 		};
 
 		const cancelScheduledFlush = () => {
@@ -295,51 +977,84 @@ class ChatStore {
 			flushUsesTimeout = true;
 		};
 
+		const agenticFlowState: AgenticFlowState = {
+			currentAssistantMessage: assistantMessage
+		};
+		let shouldUseMcpTools = false;
+
 		try {
 			await this.ensureLoaded();
 
 			const backend = await this.getBackend(model.runtimeKind);
 			const messages = conversationsStore.getInferenceMessages();
-
-			const response = await backend.complete(
-				messages,
-				model.defaultSampling.sampling,
-				{
-					onToken: (chunk) => {
-						this.lastResponse += chunk;
-						scheduleStreamUpdate();
+			const perChatOverrides = conversationsStore.getAllMcpServerOverrides();
+			const hasMcpServers = mcpStore.hasEnabledServers(perChatOverrides);
+			const hasInitializedMcp = hasMcpServers
+				? await mcpStore.ensureInitialized(perChatOverrides)
+				: false;
+			shouldUseMcpTools =
+				hasInitializedMcp && mcpStore.getOpenAIToolDefinitions(perChatOverrides).length > 0;
+			if (shouldUseMcpTools) {
+				const agenticResult = await this.completeWithMcpTools(
+					backend,
+					conversationId,
+					messages,
+					model.defaultSampling.sampling,
+					{
+						abortSignal: this.abortController.signal,
+						nPredict: model.defaultSampling.nPredict
 					},
-					onTokenDecoded: () => {
-						outputTokenCount += 1;
-						scheduleStreamUpdate();
-					}
-				},
-				{
-					abortSignal: this.abortController.signal,
-					nPredict: model.defaultSampling.nPredict
-				}
-			);
+					agenticFlowState,
+					model.id,
+					perChatOverrides
+				);
 
-			cancelScheduledFlush();
-			flushStreamUpdate();
-			const parsedResponse = splitLeadingThinkBlock(response);
-			this.lastResponse = response;
-			this.currentResponse = parsedResponse.content;
-			await conversationsStore.persistMessage(assistantMessage.id, {
-				content: parsedResponse.content,
-				status: 'done',
-				error: undefined,
-				model: model.id,
-				thinking: parsedResponse.thinking
-			});
-			this.clearGenerationState();
+				cancelScheduledFlush();
+				this.lastResponse = agenticResult.response;
+				this.currentResponse = agenticResult.response;
+				outputTokenCount = estimateDisplayedTokenCount(agenticResult.response);
+				this.clearGenerationState();
+			} else {
+				const response = await backend.complete(
+					messages,
+					model.defaultSampling.sampling,
+					{
+						onToken: (chunk) => {
+							this.lastResponse += chunk;
+							scheduleStreamUpdate();
+						},
+						onTokenDecoded: () => {
+							outputTokenCount += 1;
+							scheduleStreamUpdate();
+						}
+					},
+					{
+						abortSignal: this.abortController.signal,
+						nPredict: model.defaultSampling.nPredict
+					}
+				);
+
+				cancelScheduledFlush();
+				flushStreamUpdate();
+				const parsedResponse = splitLeadingThinkBlock(response);
+				this.lastResponse = response;
+				this.currentResponse = parsedResponse.content;
+				await conversationsStore.persistMessage(assistantMessage.id, {
+					content: parsedResponse.content,
+					status: 'done',
+					error: undefined,
+					model: model.id,
+					thinking: parsedResponse.thinking
+				});
+				this.clearGenerationState();
+			}
 		} catch (error) {
 			const message =
 				error instanceof Error ? error.message : 'The browser runtime stopped unexpectedly.';
 			const status = this.abortController.signal.aborted ? 'aborted' : 'error';
 			const parsedResponse = splitLeadingThinkBlock(this.lastResponse);
 
-			await conversationsStore.persistMessage(assistantMessage.id, {
+			await conversationsStore.persistMessage(agenticFlowState.currentAssistantMessage.id, {
 				content: parsedResponse.content,
 				status,
 				error: status === 'error' ? message : 'Generation stopped.',
@@ -376,6 +1091,16 @@ class ChatStore {
 			const model = getSelectedModelOrThrow();
 			const hadActiveConversation = Boolean(conversationsStore.activeConversation);
 
+			if (!hadActiveConversation) {
+				this.isPreparingNewChat = true;
+
+				try {
+					await this.ensureLoaded();
+				} finally {
+					this.isPreparingNewChat = false;
+				}
+			}
+
 			const { conversation, assistantMessage } = await conversationsStore.createTurn(
 				text,
 				model,
@@ -389,7 +1114,7 @@ class ChatStore {
 					modelId: model.id,
 					prefix: ''
 				};
-				await goto(`/chat/${conversation.id}`);
+				await goto(resolve('/chat/[id]', { id: conversation.id }));
 				return;
 			}
 
@@ -411,13 +1136,15 @@ class ChatStore {
 	}
 
 	stopGenerationForChat(conversationId: string): void {
-		if (this.activeConversationId === conversationId) {
+		if (
+			this.activeProcessingOwner.conversationId === conversationId ||
+			this.loadingChats.has(conversationId)
+		) {
 			this.stopGeneration();
 		}
 	}
 
-	syncLoadingStateForChat(conversationId: string): void {
-		this.activeConversationId = conversationId;
+	syncLoadingStateForChat(_conversationId: string): void {
 	}
 
 	startPendingCompletionForChat(conversationId: string): void {
@@ -442,21 +1169,30 @@ class ChatStore {
 		);
 	}
 
-	clearUIState(): void {
+	resetForHomeNavigation(): void {
+		this.stopGeneration();
+		this.pendingCompletion = null;
+		this.loadingChats = new SvelteSet();
+		this.isGenerating = false;
+		this.isPreparingNewChat = false;
+		this.clearEditMode();
+		this.clearPendingEditMessageId();
+		this.clearGenerationState();
 		this.currentResponse = '';
 		this.lastResponse = '';
 	}
 
-	setActiveProcessingConversation(conversationId: string | null): void {
-		this.activeConversationId = conversationId;
+	setActiveProcessingConversation(_conversationId: string | null): void {
 	}
 
-	clearProcessingState(_conversationId: string): void {
-		this.clearGenerationState();
+	clearProcessingState(conversationId: string): void {
+		if (this.activeProcessingOwner.conversationId === conversationId) {
+			this.clearGenerationState();
+		}
 	}
 
-	restoreProcessingStateFromMessages(_messages: DatabaseMessage[], _conversationId: string): void {
-		if (!this.isGenerating) {
+	restoreProcessingStateFromMessages(_messages: DatabaseMessage[], conversationId: string): void {
+		if (!this.isGenerating && this.activeProcessingOwner.conversationId === conversationId) {
 			this.clearGenerationState();
 		}
 	}
@@ -542,6 +1278,9 @@ class ChatStore {
 		newContent: string,
 		newExtras?: DatabaseMessageExtra[]
 	): Promise<void> {
+		const conversation = conversationsStore.activeConversation;
+		if (!conversation) return;
+
 		await DatabaseService.updateMessage(messageId, {
 			content: newContent,
 			extra: newExtras
@@ -551,6 +1290,19 @@ class ChatStore {
 			content: newContent,
 			extra: newExtras
 		});
+
+		const allMessages = await conversationsStore.getConversationMessages(conversation.id);
+		const rootMessage = allMessages.find((message) => message.type === 'root' && message.parent === null);
+		const targetMessage = findMessageById(allMessages, messageId);
+
+		if (rootMessage && targetMessage?.parent === rootMessage.id && newContent.trim()) {
+			await conversationsStore.updateConversationTitleWithConfirmation(
+				conversation.id,
+				trimConversationTitle(newContent)
+			);
+		}
+
+		conversationsStore.updateConversationTimestamp();
 	}
 
 	async editAssistantMessage(
@@ -625,9 +1377,17 @@ class ChatStore {
 		)) as DatabaseMessage;
 
 		await databaseService.updateConversation(conversation.id, {
-			currNode: assistantMessage.id,
-			name: trimConversationTitle(newContent)
+			currNode: assistantMessage.id
 		});
+
+		const allMessages = await conversationsStore.getConversationMessages(conversation.id);
+		const rootMessage = allMessages.find((entry) => entry.type === 'root' && entry.parent === null);
+		if (rootMessage && message.parent === rootMessage.id && newContent.trim()) {
+			await conversationsStore.updateConversationTitleWithConfirmation(
+				conversation.id,
+				trimConversationTitle(newContent)
+			);
+		}
 
 		await conversationsStore.loadConversation(conversation.id);
 		await this.runAssistantCompletion(conversation.id, assistantMessage, modelId);
@@ -674,40 +1434,124 @@ class ChatStore {
 
 	async addSystemPrompt(): Promise<void> {
 		const model = getSelectedModelOrThrow();
-		const conversation =
-			conversationsStore.activeConversation ?? (await conversationsStore.createConversationForModel(model));
+		let conversation = conversationsStore.activeConversation;
+		if (!conversation) {
+			conversation = await conversationsStore.createConversationForModel(model);
+		}
+		if (!conversation) return;
 
-		const rootMessage = conversationsStore.activeConversationMessages.find((message) => message.type === 'root');
-		const parentId = rootMessage?.id ?? conversation.currNode;
-		if (!parentId) return;
+		try {
+			const allMessages = await conversationsStore.getConversationMessages(conversation.id);
+			const rootMessage = allMessages.find((message) => message.type === 'root' && message.parent === null);
+			const rootId = rootMessage?.id ?? (await DatabaseService.createRootMessage(conversation.id));
+			const previousLeafId = conversation.currNode ?? rootId;
+			const existingSystemMessage = allMessages.find(
+				(message) => message.role === MessageRole.SYSTEM && message.parent === rootId
+			);
 
-		const systemMessage = await DatabaseService.createMessageBranch(
-			{
-				convId: conversation.id,
-				type: 'system',
-				timestamp: Date.now(),
-				role: 'system',
-				content: SYSTEM_MESSAGE_PLACEHOLDER,
-				status: 'done',
-				model: model.id
-			},
-			parentId
-		);
+			if (existingSystemMessage) {
+				this.pendingEditMessageId = existingSystemMessage.id;
+				return;
+			}
 
-		await databaseService.updateConversation(conversation.id, {
-			currNode: systemMessage.id
-		});
-		await conversationsStore.loadConversation(conversation.id);
-		this.pendingEditMessageId = systemMessage.id;
+			const firstActiveMessage = conversationsStore.activeMessages.find(
+				(message) => message.parent === rootId
+			);
+			const systemMessage = await DatabaseService.createMessageBranch(
+				{
+					convId: conversation.id,
+					type: 'system',
+					timestamp: Date.now(),
+					role: 'system',
+					content: SYSTEM_MESSAGE_PLACEHOLDER,
+					status: 'done',
+					model: model.id
+				},
+				rootId
+			);
+
+			if (firstActiveMessage) {
+				await DatabaseService.updateMessage(firstActiveMessage.id, { parent: systemMessage.id });
+				await DatabaseService.updateMessage(systemMessage.id, {
+					children: [firstActiveMessage.id]
+				});
+
+				const rootChildren = (rootMessage?.children ?? []).filter(
+					(id: string) => id !== firstActiveMessage.id
+				);
+				await DatabaseService.updateMessage(rootId, {
+					children: [
+						...rootChildren.filter((id: string) => id !== systemMessage.id),
+						systemMessage.id
+					]
+				});
+
+				const firstMessageIndex = conversationsStore.findMessageIndex(firstActiveMessage.id);
+				if (firstMessageIndex !== -1) {
+					conversationsStore.updateMessageAtIndex(firstMessageIndex, {
+						parent: systemMessage.id
+					});
+				}
+
+				await conversationsStore.updateCurrentNode(previousLeafId);
+			} else {
+				await conversationsStore.updateCurrentNode(systemMessage.id);
+			}
+
+			conversationsStore.activeConversationMessages = [
+				systemMessage,
+				...conversationsStore.activeConversationMessages
+			];
+			conversationsStore.updateConversationTimestamp();
+			this.pendingEditMessageId = systemMessage.id;
+		} catch (error) {
+			console.error('Failed to add system prompt:', error);
+		}
 	}
 
 	async removeSystemPromptPlaceholder(messageId: string): Promise<boolean> {
 		const conversation = conversationsStore.activeConversation;
 		if (!conversation) return false;
 
-		await DatabaseService.deleteMessage(messageId);
-		await conversationsStore.loadConversation(conversation.id);
-		return false;
+		try {
+			const allMessages = await conversationsStore.getConversationMessages(conversation.id);
+			const systemMessage = findMessageById(allMessages, messageId);
+			if (!systemMessage || systemMessage.role !== MessageRole.SYSTEM) {
+				return false;
+			}
+
+			const rootMessage = allMessages.find((message) => message.type === 'root' && message.parent === null);
+			if (!rootMessage) {
+				return false;
+			}
+
+			if (allMessages.length === 2 && systemMessage.children.length === 0) {
+				await conversationsStore.deleteConversation(conversation.id);
+				return true;
+			}
+
+			for (const childId of systemMessage.children) {
+				await DatabaseService.updateMessage(childId, { parent: rootMessage.id });
+				const childIndex = conversationsStore.findMessageIndex(childId);
+				if (childIndex !== -1) {
+					conversationsStore.updateMessageAtIndex(childIndex, { parent: rootMessage.id });
+				}
+			}
+
+			await DatabaseService.updateMessage(rootMessage.id, {
+					children: [
+						...rootMessage.children.filter((childId: string) => childId !== messageId),
+						...systemMessage.children
+					]
+				});
+			await DatabaseService.deleteMessage(messageId);
+			await conversationsStore.loadConversation(conversation.id);
+			conversationsStore.updateConversationTimestamp();
+			return false;
+		} catch (error) {
+			console.error('Failed to remove system prompt placeholder:', error);
+			return false;
+		}
 	}
 
 	clearPendingEditMessageId(): void {
@@ -731,6 +1575,20 @@ class ChatStore {
 	getAllLoadingChats(): string[] {
 		return Array.from(this.loadingChats);
 	}
+
+	isConversationLoading(conversationId: string | null | undefined): boolean {
+		if (!conversationId) {
+			return false;
+		}
+
+		return this.loadingChats.has(conversationId);
+	}
+
+	getProcessingStateFor(scope?: ProcessingStateScope): ApiProcessingState | null {
+		return matchesProcessingStateOwner(this.activeProcessingOwner, scope)
+			? this.activeProcessingState
+			: null;
+	}
 }
 
 export const chatStore = new ChatStore();
@@ -738,8 +1596,12 @@ export const chatStore = new ChatStore();
 export const errorDialog = () => chatStore.errorDialogState;
 export const isLoading = () => chatStore.isGenerating;
 export const isChatStreaming = () => chatStore.isGenerating;
+export const isPreparingNewChat = () => chatStore.isPreparingNewChat;
 export const isEditing = () => chatStore.isEditModeActive;
 export const getAddFilesHandler = () => chatStore.getAddFilesHandler();
 export const pendingEditMessageId = () => chatStore.pendingEditMessageId;
 export const activeProcessingState = () => chatStore.activeProcessingState;
+export const isConversationLoading = (conversationId: string | null | undefined) =>
+	chatStore.isConversationLoading(conversationId);
+export const processingStateFor = (scope?: ProcessingStateScope) => chatStore.getProcessingStateFor(scope);
 export const getAllLoadingChats = () => chatStore.getAllLoadingChats();

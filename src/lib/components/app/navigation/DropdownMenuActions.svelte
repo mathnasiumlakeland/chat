@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { mergeProps } from 'bits-ui';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import * as Tooltip from '$lib/components/ui/tooltip';
 	import { KeyboardShortcutInfo } from '$lib/components/app';
@@ -34,23 +35,36 @@
 </script>
 
 <DropdownMenu.Root bind:open>
-	<DropdownMenu.Trigger
-		class="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md p-0 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground focus:outline-none disabled:pointer-events-none disabled:opacity-50 data-[state=open]:bg-accent data-[state=open]:text-accent-foreground {triggerClass}"
-		onclick={(e) => e.stopPropagation()}
-	>
-		{#if triggerTooltip}
-			<Tooltip.Root>
-				<Tooltip.Trigger>
+	<DropdownMenu.Trigger onclick={(e) => e.stopPropagation()}>
+		{#snippet child({ props: dropdownTriggerProps })}
+			{#if triggerTooltip}
+				<Tooltip.Root>
+					<Tooltip.Trigger>
+						{#snippet child({ props: tooltipTriggerProps })}
+							<button
+								{...mergeProps(dropdownTriggerProps, tooltipTriggerProps)}
+								type="button"
+								class="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md p-0 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground focus:outline-none disabled:pointer-events-none disabled:opacity-50 data-[state=open]:bg-accent data-[state=open]:text-accent-foreground {triggerClass}"
+							>
+								{@render iconComponent(triggerIcon, 'h-3 w-3')}
+								<span class="sr-only">{triggerTooltip}</span>
+							</button>
+						{/snippet}
+					</Tooltip.Trigger>
+					<Tooltip.Content>
+						<p>{triggerTooltip}</p>
+					</Tooltip.Content>
+				</Tooltip.Root>
+			{:else}
+				<button
+					{...dropdownTriggerProps}
+					type="button"
+					class="flex h-6 w-6 cursor-pointer items-center justify-center rounded-md p-0 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground focus:outline-none disabled:pointer-events-none disabled:opacity-50 data-[state=open]:bg-accent data-[state=open]:text-accent-foreground {triggerClass}"
+				>
 					{@render iconComponent(triggerIcon, 'h-3 w-3')}
-					<span class="sr-only">{triggerTooltip}</span>
-				</Tooltip.Trigger>
-				<Tooltip.Content>
-					<p>{triggerTooltip}</p>
-				</Tooltip.Content>
-			</Tooltip.Root>
-		{:else}
-			{@render iconComponent(triggerIcon, 'h-3 w-3')}
-		{/if}
+				</button>
+			{/if}
+		{/snippet}
 	</DropdownMenu.Trigger>
 
 	<DropdownMenu.Content {align} class="z-[999999] w-48">

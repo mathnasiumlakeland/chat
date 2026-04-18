@@ -1,4 +1,4 @@
-import { MODEL_CATALOG } from '$lib/constants/models';
+import { getModelArtifactPath, MODEL_CATALOG } from '$lib/constants/models';
 import { ServerRole } from '$lib/enums';
 import { selectedModelId } from '$lib/stores/model-state.svelte';
 
@@ -11,8 +11,8 @@ function createProps(): ApiLlamaCppServerProps {
 
 	return {
 		role: ServerRole.ROUTER,
-		model_path: model.hfFilename,
-		model_alias: model.id.split('/').at(-1) ?? model.id,
+		model_path: getModelArtifactPath(model),
+		model_alias: model.displayName,
 		modalities: {
 			vision: false,
 			audio: false
