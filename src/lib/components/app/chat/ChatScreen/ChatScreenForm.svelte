@@ -15,7 +15,6 @@
 		onFileUpload?: (files: File[]) => void;
 		onSend?: (message: string, files?: ChatUploadedFile[]) => Promise<boolean>;
 		onStop?: () => void;
-		onSystemPromptAdd?: (draft: { message: string; files: ChatUploadedFile[] }) => void;
 		showHelperText?: boolean;
 		uploadedFiles?: ChatUploadedFile[];
 	}
@@ -32,7 +31,6 @@
 		onFileUpload,
 		onSend,
 		onStop,
-		onSystemPromptAdd,
 		showHelperText = true,
 		uploadedFiles = $bindable([])
 	}: Props = $props();
@@ -49,10 +47,6 @@
 			previousInitialMessage = initialMessage;
 		}
 	});
-
-	function handleSystemPromptClick() {
-		onSystemPromptAdd?.({ message, files: uploadedFiles });
-	}
 
 	let hasLoadingAttachments = $derived(uploadedFiles.some((f) => f.isLoading));
 
@@ -145,19 +139,17 @@
 		{disabled}
 		{isLoading}
 		showPendingState={showModelLoadingState}
-		showMcpPromptButton
 		onFilesAdd={handleFilesAdd}
 		{onStop}
 		onSubmit={handleSubmit}
-		onSystemPromptClick={handleSystemPromptClick}
 		onUploadedFileRemove={handleUploadedFileRemove}
 	/>
 
 	{#if showModelLoadingState}
 		<div class="mt-3 px-4">
 			<div class="mb-2 flex items-center justify-between gap-3 text-xs text-muted-foreground">
-				<p class="truncate font-medium text-foreground/80">
-					Loading {modelLoadingLabel ?? 'model'}...
+				<p class="model-loading-text truncate font-medium">
+					Loading {modelLoadingLabel ?? 'model'}
 				</p>
 
 				<span class="shrink-0 font-mono text-[11px] uppercase tracking-[0.08em]">
@@ -167,8 +159,7 @@
 
 			<div class="h-1 overflow-hidden rounded-full bg-border/80">
 				<div
-					class="h-full rounded-full bg-foreground/70 transition-[width] duration-300 ease-out"
-					class:animate-pulse={clampedModelLoadingProgress === 0}
+					class="model-loading-progress-fill h-full rounded-full transition-[width] duration-300 ease-out"
 					style:width={modelLoadingProgressWidth}
 				></div>
 			</div>
@@ -181,3 +172,42 @@
 </div>
 
 <ChatFormHelperText show={showHelperText && !showModelLoadingState} />
+
+<style>
+	.model-loading-text {
+		color: var(--muted-foreground);
+		background: linear-gradient(
+			90deg,
+			var(--muted-foreground) 0%,
+			var(--muted-foreground) 42%,
+			var(--foreground) 49%,
+			var(--foreground) 51%,
+			var(--muted-foreground) 58%,
+			var(--muted-foreground) 100%
+		);
+		background-size: 260% 100%;
+		background-position: 88% 0;
+		background-clip: text;
+		-webkit-background-clip: text;
+		-webkit-text-fill-color: transparent;
+		animation: model-loading-shine 2.7s linear infinite;
+	}
+
+	.model-loading-progress-fill {
+		background: var(--foreground);
+	}
+
+	@keyframes model-loading-shine {
+		0% {
+			background-position: 88% 0;
+		}
+
+		88% {
+			background-position: 10% 0;
+		}
+
+		100% {
+			background-position: 10% 0;
+		}
+	}
+</style>

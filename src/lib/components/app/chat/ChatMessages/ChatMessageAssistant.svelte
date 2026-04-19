@@ -8,12 +8,12 @@
 	import { useProcessingState } from '$lib/hooks/use-processing-state.svelte';
 	import { isLoading, isChatStreaming } from '$lib/stores/chat.svelte';
 	import { autoResizeTextarea, copyToClipboard, isIMEComposing } from '$lib/utils';
-	import { onDestroy, tick } from 'svelte';
+	import { tick } from 'svelte';
 	import { fade } from 'svelte/transition';
 	import { Check, X } from '@lucide/svelte';
 	import { Button } from '$lib/components/ui/button';
 	import { Checkbox } from '$lib/components/ui/checkbox';
-	import { INPUT_CLASSES, PREFILL_ELLIPSIS_INTERVAL_MS, SPINNER_VERBS } from '$lib/constants';
+	import { INPUT_CLASSES, SPINNER_VERBS } from '$lib/constants';
 	import { MessageRole, KeyboardKey, ChatMessageStatsView } from '$lib/enums';
 	import Label from '$lib/components/ui/label/label.svelte';
 	import { config } from '$lib/stores/settings.svelte';
@@ -205,9 +205,7 @@
 		showPrefillProgress ? `${Math.max(prefillProgressPercent, 4)}%` : '0%'
 	);
 	let prefillSpinnerVerb = $state<string>(SPINNER_VERBS[0]);
-	let prefillEllipsisStep = $state(0);
-	let prefillEllipsis = $derived('.'.repeat(prefillEllipsisStep));
-	let prefillEllipsisInterval: number | null = null;
+	let wasPreparingPrompt = false;
 
 	function getRandomSpinnerVerb(previousVerb: string): string {
 		const nextIndex = Math.floor(Math.random() * SPINNER_VERBS.length);
@@ -218,27 +216,6 @@
 		}
 
 		return SPINNER_VERBS[(nextIndex + 1) % SPINNER_VERBS.length];
-	}
-
-	function startPrefillStatusAnimation(): void {
-		if (prefillEllipsisInterval !== null) {
-			return;
-		}
-
-		prefillSpinnerVerb = getRandomSpinnerVerb(prefillSpinnerVerb);
-		prefillEllipsisStep = 0;
-		prefillEllipsisInterval = window.setInterval(() => {
-			prefillEllipsisStep = (prefillEllipsisStep + 1) % 4;
-		}, PREFILL_ELLIPSIS_INTERVAL_MS);
-	}
-
-	function stopPrefillStatusAnimation(): void {
-		if (prefillEllipsisInterval !== null) {
-			window.clearInterval(prefillEllipsisInterval);
-			prefillEllipsisInterval = null;
-		}
-
-		prefillEllipsisStep = 0;
 	}
 
 	$effect(() => {
@@ -254,16 +231,11 @@
 	});
 
 	$effect(() => {
-		if (isPreparingPrompt) {
-			startPrefillStatusAnimation();
-			return;
+		if (isPreparingPrompt && !wasPreparingPrompt) {
+			prefillSpinnerVerb = getRandomSpinnerVerb(prefillSpinnerVerb);
 		}
 
-		stopPrefillStatusAnimation();
-	});
-
-	onDestroy(() => {
-		stopPrefillStatusAnimation();
+		wasPreparingPrompt = isPreparingPrompt;
 	});
 </script>
 
@@ -275,15 +247,13 @@
 	{#if showProcessingInfoTop}
 		<div class="mt-6 w-full max-w-[48rem]" in:fade>
 			<div class="processing-container">
-					<span class="processing-text">
-						{#if isPreparingPrompt}
-							<span>{prefillSpinnerVerb}</span><span class="processing-ellipsis" aria-hidden="true"
-								>{prefillEllipsis}</span
-							>
-						{:else}
-							{processingState.getPromptProgressText() ??
-								processingState.getProcessingMessage() ??
-							'Processing...'}
+				<span class="processing-text">
+					{#if isPreparingPrompt}
+						<span>{prefillSpinnerVerb}</span>
+					{:else}
+						{processingState.getPromptProgressText() ??
+							processingState.getProcessingMessage() ??
+						'Processing...'}
 					{/if}
 				</span>
 
@@ -429,23 +399,21 @@
 	.processing-text {
 		background: linear-gradient(
 			90deg,
-			var(--muted-foreground),
-			var(--foreground),
-			var(--muted-foreground)
+			var(--muted-foreground) 0%,
+			var(--muted-foreground) 42%,
+			var(--foreground) 49%,
+			var(--foreground) 51%,
+			var(--muted-foreground) 58%,
+			var(--muted-foreground) 100%
 		);
-		background-size: 200% 100%;
+		background-size: 260% 100%;
+		background-position: 88% 0;
 		background-clip: text;
 		-webkit-background-clip: text;
 		-webkit-text-fill-color: transparent;
-		animation: shine 1s linear infinite;
+		animation: shine 2.7s linear infinite;
 		font-weight: 500;
 		font-size: 0.875rem;
-	}
-
-	.processing-ellipsis {
-		display: inline-block;
-		width: 3ch;
-		text-align: left;
 	}
 
 	.processing-progress-track {
@@ -453,26 +421,27 @@
 		height: 3px;
 		border-radius: 999px;
 		overflow: hidden;
-		background: hsl(var(--border) / 0.6);
+		background: color-mix(in oklch, var(--border) 60%, transparent);
 	}
 
 	.processing-progress-fill {
 		height: 100%;
 		border-radius: inherit;
-		background: linear-gradient(
-			90deg,
-			hsl(var(--foreground) / 0.45),
-			hsl(var(--foreground) / 0.9),
-			hsl(var(--foreground) / 0.45)
-		);
-		background-size: 200% 100%;
-		animation: shine 1.2s linear infinite;
+		background: var(--foreground);
 		transition: width 160ms ease-out;
 	}
 
 	@keyframes shine {
-		to {
-			background-position: -200% 0;
+		0% {
+			background-position: 88% 0;
+		}
+
+		88% {
+			background-position: 10% 0;
+		}
+
+		100% {
+			background-position: 10% 0;
 		}
 	}
 

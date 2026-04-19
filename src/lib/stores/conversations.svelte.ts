@@ -36,6 +36,11 @@ function deriveConversationTitle(content: string): string {
 	return trimConversationTitle(normalizedContent);
 }
 
+function getConfiguredSystemMessage(): string | null {
+	const systemMessage = config().systemMessage?.toString().trim();
+	return systemMessage ? systemMessage : null;
+}
+
 export function buildConversationTree(
 	items: DatabaseConversation[] = conversationsStore.list as DatabaseConversation[]
 ): ConversationTreeItem[] {
@@ -297,6 +302,39 @@ class ConversationsStore {
 		return this.createConversationForModel(inferModel(modelId));
 	}
 
+	private async maybeCreateConfiguredSystemMessage(
+		conversation: DatabaseConversation
+	): Promise<DatabaseMessage | null> {
+		const systemPrompt = getConfiguredSystemMessage();
+		if (!systemPrompt) {
+			return null;
+		}
+
+		const messages = await this.getConversationMessages(conversation.id);
+		const rootMessage = messages.find((message) => message.type === 'root' && message.parent === null);
+		if (!rootMessage) {
+			return null;
+		}
+
+		const hasConversationMessages = messages.some((message) => message.id !== rootMessage.id);
+		if (hasConversationMessages) {
+			return null;
+		}
+
+		return (await databaseService.createMessageBranch(
+			{
+				convId: conversation.id,
+				type: 'system',
+				timestamp: Date.now(),
+				role: 'system',
+				content: systemPrompt,
+				status: 'done',
+				model: conversation.modelId
+			},
+			rootMessage.id
+		)) as DatabaseMessage;
+	}
+
 	async createTurn(
 		prompt: string,
 		model: ModelCatalogEntry,
@@ -308,10 +346,15 @@ class ConversationsStore {
 	}> {
 		const conversation =
 			this.activeConversation ?? (await this.createConversationForModel(model));
-		const parentId = conversation.currNode;
+		let parentId = conversation.currNode;
 
 		if (!parentId) {
 			throw new Error('The active conversation is missing its root node.');
+		}
+
+		const systemMessage = await this.maybeCreateConfiguredSystemMessage(conversation);
+		if (systemMessage) {
+			parentId = systemMessage.id;
 		}
 
 		const userMessage = (await databaseService.createMessageBranch(

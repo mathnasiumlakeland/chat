@@ -16,11 +16,10 @@
 		DialogModelInformation,
 		ModelId,
 		ModelsSelectorList,
-		SearchInput,
 		TruncatedText
 	} from '$lib/components/app';
 	import type { ModelOption } from '$lib/types/models';
-	import { filterModelOptions, groupModelOptions } from './utils';
+	import { groupModelOptions } from './utils';
 
 	interface Props {
 		class?: string;
@@ -72,11 +71,7 @@
 		return options.some((option) => option.model === currentModel);
 	});
 
-	let searchTerm = $state('');
-
-	let filteredOptions = $derived(filterModelOptions(options, searchTerm));
-
-	let groupedFilteredOptions = $derived(groupModelOptions(filteredOptions, (m) => modelsStore.isModelLoaded(m)));
+	let groupedOptions = $derived(groupModelOptions(options, (m) => modelsStore.isModelLoaded(m)));
 
 	let sheetOpen = $state(false);
 	let showModelDialog = $state(false);
@@ -99,14 +94,12 @@
 		if (isRouter) {
 			if (open) {
 				sheetOpen = true;
-				searchTerm = '';
 
 				modelsStore.fetchRouterModels().then(() => {
 					modelsStore.fetchModalitiesForLoadedModels();
 				});
 			} else {
 				sheetOpen = false;
-				searchTerm = '';
 			}
 		} else {
 			showModelDialog = open;
@@ -204,7 +197,7 @@
 	{#if loading && options.length === 0 && isRouter}
 		<div class="flex items-center gap-2 text-xs text-muted-foreground">
 			<Loader2 class="h-3.5 w-3.5 animate-spin" />
-			Loading models…
+				Loading models
 		</div>
 	{:else if options.length === 0 && isRouter}
 		<p class="text-xs text-muted-foreground">No models available.</p>
@@ -258,10 +251,6 @@
 					</Sheet.Header>
 
 					<div class="flex flex-col gap-1 pb-4">
-						<div class="mb-3 px-4">
-							<SearchInput placeholder="Search models..." bind:value={searchTerm} />
-						</div>
-
 						<div class="max-h-[60vh] overflow-y-auto px-2">
 							{#if !isCurrentModelInCache && currentModel}
 								<button
@@ -277,12 +266,8 @@
 								<div class="my-1 h-px bg-border"></div>
 							{/if}
 
-							{#if filteredOptions.length === 0}
-								<p class="px-3 py-3 text-center text-sm text-muted-foreground">No models found.</p>
-							{/if}
-
 							<ModelsSelectorList
-								groups={groupedFilteredOptions}
+								groups={groupedOptions}
 								{currentModel}
 								{activeId}
 								sectionHeaderClass="px-2 py-2 text-xs font-semibold text-muted-foreground/60 select-none"

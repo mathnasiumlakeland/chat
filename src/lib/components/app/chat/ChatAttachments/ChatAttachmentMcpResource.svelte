@@ -34,6 +34,7 @@
 		{#snippet child({ props })}
 			<button
 				type="button"
+				{...props}
 				class={cn(
 					'flex flex-shrink-0 items-center gap-1.5 rounded-md border px-2 py-0.75 text-sm transition-colors',
 					getStatusClass(attachment),
@@ -42,7 +43,6 @@
 				)}
 				onclick={onClick}
 				disabled={!onClick}
-				{...props}
 			>
 				{#if attachment.loading}
 					<Loader2 class="h-3 w-3 animate-spin text-muted-foreground" />

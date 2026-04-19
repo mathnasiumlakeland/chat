@@ -23,7 +23,7 @@ afterEach(async () => {
 
 describe('DatabaseService migrations', () => {
 	it('migrates legacy conversations and seeds model state defaults', async () => {
-		const databaseName = `bonsai-browser-chat-migration-${crypto.randomUUID()}`;
+		const databaseName = `chat-history-migration-${crypto.randomUUID()}`;
 
 		const legacyDatabase = new Dexie(databaseName);
 		databases.push(legacyDatabase);
@@ -67,7 +67,7 @@ describe('DatabaseService migrations', () => {
 	});
 
 	it('normalizes legacy model ids onto the ternary catalog during upgrade', async () => {
-		const databaseName = `bonsai-browser-chat-normalize-${crypto.randomUUID()}`;
+		const databaseName = `chat-history-normalize-${crypto.randomUUID()}`;
 
 		const legacyDatabase = new Dexie(databaseName);
 		databases.push(legacyDatabase);

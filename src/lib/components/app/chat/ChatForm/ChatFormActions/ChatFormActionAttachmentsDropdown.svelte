@@ -223,9 +223,9 @@
 						<Tooltip.Trigger>
 							{#snippet child({ props })}
 								<DropdownMenu.Item
+									{...props}
 									class="flex cursor-pointer items-center gap-2"
 									onclick={() => onFileUpload?.()}
-									{...props}
 								>
 									<FILE_TYPE_ICONS.pdf class="h-4 w-4" />
 
@@ -244,9 +244,9 @@
 					<Tooltip.Trigger>
 						{#snippet child({ props })}
 							<DropdownMenu.Item
+								{...props}
 								class="flex cursor-pointer items-center gap-2"
 								onclick={() => onSystemPromptClick?.()}
-								{...props}
 							>
 								<MessageSquare class="h-4 w-4" />
 

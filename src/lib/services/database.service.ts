@@ -14,13 +14,22 @@ import type { ModelStateRecord } from '$lib/types/models';
 import { findDescendantMessages } from '$lib/utils/branching';
 import { createId } from '$lib/utils/uuid';
 
-const DATABASE_NAME = 'bonsai-browser-chat';
+const DATABASE_NAME = 'chat-history';
 const DEFAULT_SAMPLING_PRESET_ID = MODEL_CATALOG[0].defaultSampling.id;
 const DEFAULT_RUNTIME_KIND =
 	getModelCatalogEntry(DEFAULT_MODEL_ID)?.runtimeKind ?? 'onnx-webgpu';
 
 function inferRuntimeKind(modelId: string | null | undefined): ConversationRecord['runtimeKind'] {
 	return getModelCatalogEntry(modelId)?.runtimeKind ?? DEFAULT_RUNTIME_KIND;
+}
+
+async function deleteDatabaseByName(name: string): Promise<void> {
+	await new Promise<void>((resolve, reject) => {
+		const request = indexedDB.deleteDatabase(name);
+		request.onsuccess = () => resolve();
+		request.onerror = () => reject(request.error);
+		request.onblocked = () => resolve();
+	});
 }
 
 export class BonsaiChatDatabase extends Dexie {
@@ -114,7 +123,7 @@ let database = createDatabase();
 
 export async function resetDefaultDatabaseForTests(): Promise<void> {
 	database.close();
-	await database.delete();
+	await deleteDatabaseByName(DATABASE_NAME);
 	database = createDatabase();
 	databaseService = new DatabaseService(database);
 }

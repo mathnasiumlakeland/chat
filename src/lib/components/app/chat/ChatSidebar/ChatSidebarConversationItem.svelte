@@ -136,13 +136,13 @@
 				<Tooltip.Trigger>
 					{#snippet child({ props })}
 						<div
+							{...props}
 							class="stop-button flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground"
 							onclick={handleStop}
 							onkeydown={(e) => e.key === 'Enter' && handleStop(e)}
 							role="button"
 							tabindex="0"
 							aria-label="Stop generation"
-							{...props}
 						>
 							<Loader2 class="loading-icon h-3.5 w-3.5 animate-spin" />
 

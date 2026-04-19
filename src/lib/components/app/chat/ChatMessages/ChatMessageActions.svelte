@@ -95,25 +95,40 @@
 		<div
 			class="pointer-events-auto inset-0 flex items-center gap-1 opacity-100 transition-all duration-150"
 		>
-			<ActionIcon icon={Copy} tooltip="Copy" onclick={onCopy} />
+			<ActionIcon icon={Copy} tooltip="Copy" tooltipMode="inline" onclick={onCopy} />
 
 			{#if onEdit}
-				<ActionIcon icon={Edit} tooltip="Edit" onclick={onEdit} />
+				<ActionIcon icon={Edit} tooltip="Edit" tooltipMode="inline" onclick={onEdit} />
 			{/if}
 
 			{#if role === MessageRole.ASSISTANT && onRegenerate}
-				<ActionIcon icon={RefreshCw} tooltip="Regenerate" onclick={() => onRegenerate()} />
+				<ActionIcon
+					icon={RefreshCw}
+					tooltip="Regenerate"
+					tooltipMode="inline"
+					onclick={() => onRegenerate()}
+				/>
 			{/if}
 
 			{#if role === MessageRole.ASSISTANT && onContinue}
-				<ActionIcon icon={ArrowRight} tooltip="Continue" onclick={onContinue} />
+				<ActionIcon
+					icon={ArrowRight}
+					tooltip="Continue"
+					tooltipMode="inline"
+					onclick={onContinue}
+				/>
 			{/if}
 
 			{#if onForkConversation}
-				<ActionIcon icon={GitBranch} tooltip="Fork conversation" onclick={handleOpenForkDialog} />
+				<ActionIcon
+					icon={GitBranch}
+					tooltip="Fork conversation"
+					tooltipMode="inline"
+					onclick={handleOpenForkDialog}
+				/>
 			{/if}
 
-			<ActionIcon icon={Trash2} tooltip="Delete" onclick={onDelete} />
+			<ActionIcon icon={Trash2} tooltip="Delete" tooltipMode="inline" onclick={onDelete} />
 		</div>
 	</div>
 

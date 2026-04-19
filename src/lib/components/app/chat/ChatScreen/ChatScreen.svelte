@@ -20,8 +20,7 @@
 		isPreparingNewChat,
 		isLoading,
 		isChatStreaming,
-		isEditing,
-		getAddFilesHandler
+		isEditing
 	} from '$lib/stores/chat.svelte';
 	import {
 		conversationsStore,
@@ -40,7 +39,6 @@
 	import { onMount } from 'svelte';
 	import { fade, fly, slide } from 'svelte/transition';
 	import { Trash2, AlertTriangle, RefreshCw } from '@lucide/svelte';
-	import ChatScreenDragOverlay from './ChatScreenDragOverlay.svelte';
 
 	let { showCenteredEmpty = false } = $props();
 
@@ -62,8 +60,6 @@
 
 	let disableAutoScroll = $derived(Boolean(config().disableAutoScroll));
 	let chatScrollContainer: HTMLDivElement | undefined = $state();
-	let dragCounter = $state(0);
-	let isDragOver = $state(false);
 	let showFileErrorDialog = $state(false);
 	let uploadedFiles = $state<ChatUploadedFile[]>([]);
 
@@ -181,55 +177,9 @@
 		showDeleteDialog = false;
 	}
 
-	function handleDragEnter(event: DragEvent) {
-		event.preventDefault();
-
-		dragCounter++;
-
-		if (event.dataTransfer?.types.includes('Files')) {
-			isDragOver = true;
-		}
-	}
-
-	function handleDragLeave(event: DragEvent) {
-		event.preventDefault();
-
-		dragCounter--;
-
-		if (dragCounter === 0) {
-			isDragOver = false;
-		}
-	}
-
 	function handleErrorDialogOpenChange(open: boolean) {
 		if (!open) {
 			chatStore.dismissErrorDialog();
-		}
-	}
-
-	function handleDragOver(event: DragEvent) {
-		event.preventDefault();
-	}
-
-	function handleDrop(event: DragEvent) {
-		event.preventDefault();
-
-		isDragOver = false;
-		dragCounter = 0;
-
-		if (event.dataTransfer?.files) {
-			const files = Array.from(event.dataTransfer.files);
-
-			if (isEditing()) {
-				const handler = getAddFilesHandler();
-
-				if (handler) {
-					handler(files);
-					return;
-				}
-			}
-
-			processFiles(files);
 		}
 	}
 
@@ -254,14 +204,6 @@
 				showDeleteDialog = true;
 			}
 		}
-	}
-
-	async function handleSystemPromptAdd(draft: { message: string; files: ChatUploadedFile[] }) {
-		if (draft.message || draft.files.length > 0) {
-			chatStore.savePendingDraft(draft.message, draft.files);
-		}
-
-		await chatStore.addSystemPrompt();
 	}
 
 	function handleScroll() {
@@ -404,10 +346,6 @@
 	});
 </script>
 
-{#if isDragOver}
-	<ChatScreenDragOverlay />
-{/if}
-
 <svelte:window onkeydown={handleKeydown} />
 
 <ChatScreenHeader />
@@ -415,12 +353,8 @@
 {#if !isEmpty}
 	<div
 		bind:this={chatScrollContainer}
-		aria-label="Chat interface with file drop zone"
+		aria-label="Chat interface"
 		class="flex h-full flex-col-reverse overflow-y-auto px-4 md:px-6"
-		ondragenter={handleDragEnter}
-		ondragleave={handleDragLeave}
-		ondragover={handleDragOver}
-		ondrop={handleDrop}
 		onscroll={handleScroll}
 		role="main"
 	>
@@ -474,7 +408,6 @@
 						onFileUpload={handleFileUpload}
 						onSend={handleSendMessage}
 						onStop={() => chatStore.stopGeneration()}
-						onSystemPromptAdd={handleSystemPromptAdd}
 						showModelLoadingState={showPreparingModelState}
 						showHelperText={false}
 						bind:uploadedFiles
@@ -488,12 +421,8 @@
 	<ServerLoadingSplash />
 {:else}
 	<div
-		aria-label="Welcome screen with file drop zone"
+		aria-label="Welcome screen"
 		class="flex h-full items-center justify-center"
-		ondragenter={handleDragEnter}
-		ondragleave={handleDragLeave}
-		ondragover={handleDragOver}
-		ondrop={handleDrop}
 		role="main"
 	>
 		<div class="mt-4 w-full max-w-[48rem] px-4 md:mt-6">
@@ -537,7 +466,6 @@
 					onFileUpload={handleFileUpload}
 					onSend={handleSendMessage}
 					onStop={() => chatStore.stopGeneration()}
-					onSystemPromptAdd={handleSystemPromptAdd}
 					showModelLoadingState={showPreparingModelState}
 					showHelperText
 					bind:uploadedFiles

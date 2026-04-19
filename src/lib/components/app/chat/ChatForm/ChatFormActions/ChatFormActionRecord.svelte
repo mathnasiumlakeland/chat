@@ -27,13 +27,13 @@
 		<Tooltip.Trigger>
 			{#snippet child({ props })}
 				<Button
+					{...props}
 					class="h-8 w-8 rounded-full p-0 {isRecording
 						? 'animate-pulse bg-red-500 text-white hover:bg-red-600'
 						: ''}"
 					disabled={disabled || isLoading || !hasAudioModality}
 					onclick={onMicClick}
 					type="button"
-					{...props}
 				>
 					<span class="sr-only">{isRecording ? 'Stop recording' : 'Start recording'}</span>
 

@@ -6,6 +6,13 @@ import { ErrorDialogType, MessageRole, MessageType, ToolCallType } from '$lib/en
 import { createInferenceBackend } from '$lib/runtime/create-inference-backend';
 import type { InferenceBackend } from '$lib/runtime/inference-backend';
 import {
+	MODEL_IDLE_EVICTION_MS,
+	clearPendingModelCachePurge,
+	purgeCachedModelArtifactsForModelId,
+	readPendingModelCachePurge,
+	writePendingModelCachePurge
+} from '$lib/runtime/model-artifact-cache';
+import {
 	buildMcpAgenticSystemPrompt,
 	buildToolResultContext,
 	parseMcpAgenticDecision,
@@ -218,12 +225,173 @@ class ChatStore {
 	private pendingDraftFiles = $state<ChatUploadedFile[]>([]);
 	private loadPromise: Promise<void> | null = null;
 	private loadingModelId: string | null = null;
+	private inactivityTimer: ReturnType<typeof setTimeout> | null = null;
+	private lastModelActivityAt: number | null = null;
+	private activeEviction: Promise<void> | null = null;
 	private pendingCompletion = $state<{
 		conversationId: string;
 		assistantMessageId: string;
 		modelId: string;
 		prefix: string;
 	} | null>(null);
+	private readonly onWindowActivity = () => {
+		this.noteModelActivity();
+	};
+	private readonly onVisibilityChange = () => {
+		if (typeof document === 'undefined' || document.visibilityState !== 'visible') {
+			return;
+		}
+
+		void this.evictModelIfIdle().catch((error) => {
+			console.error('Failed to evict idle model artifacts:', error);
+		});
+	};
+	private readonly onPageHide = () => {
+		if (!this.loadedModelId) {
+			return;
+		}
+
+		writePendingModelCachePurge({
+			modelId: this.loadedModelId,
+			requestedAt: Date.now()
+		});
+		void this.evictLoadedModel({ purgeDownloads: true }).catch((error) => {
+			console.error('Failed to evict model artifacts during page hide:', error);
+		});
+	};
+
+	constructor() {
+		if (typeof window === 'undefined' || typeof document === 'undefined') {
+			return;
+		}
+
+		for (const eventName of ['pointerdown', 'keydown', 'touchstart', 'focus']) {
+			window.addEventListener(eventName, this.onWindowActivity, { passive: true });
+		}
+
+		document.addEventListener('visibilitychange', this.onVisibilityChange);
+		window.addEventListener('pagehide', this.onPageHide);
+		void this.reconcilePendingModelCachePurge().catch((error) => {
+			console.error('Failed to reconcile pending model cache purge:', error);
+		});
+	}
+
+	private clearInactivityTimer(): void {
+		if (this.inactivityTimer) {
+			clearTimeout(this.inactivityTimer);
+			this.inactivityTimer = null;
+		}
+	}
+
+	private scheduleInactivityEviction(): void {
+		this.clearInactivityTimer();
+
+		if (!this.loadedModelId) {
+			return;
+		}
+
+		const lastActivityAt = this.lastModelActivityAt ?? Date.now();
+		const remainingMs = Math.max(0, MODEL_IDLE_EVICTION_MS - (Date.now() - lastActivityAt));
+		this.inactivityTimer = globalThis.setTimeout(() => {
+			void this.evictModelIfIdle().catch((error) => {
+				console.error('Failed to evict idle model artifacts:', error);
+			});
+		}, remainingMs);
+	}
+
+	private noteModelActivity(): void {
+		if (!this.loadedModelId) {
+			return;
+		}
+
+		this.lastModelActivityAt = Date.now();
+		this.scheduleInactivityEviction();
+	}
+
+	private async syncLoadedModelStatus(loadedModelId: string | null): Promise<void> {
+		const { modelsStore } = await import('$lib/stores/models.svelte');
+		modelsStore.syncLoadedModelStatus(loadedModelId);
+	}
+
+	private async reconcilePendingModelCachePurge(): Promise<void> {
+		const pendingPurge = readPendingModelCachePurge();
+		if (!pendingPurge) {
+			return;
+		}
+
+		try {
+			await purgeCachedModelArtifactsForModelId(pendingPurge.modelId);
+		} finally {
+			clearPendingModelCachePurge();
+			this.loadedModelId = null;
+			this.lastModelActivityAt = null;
+			modelStateStore.setRuntimeInfo(null);
+			await modelStateStore.setLoadState('idle');
+			await this.syncLoadedModelStatus(null);
+		}
+	}
+
+	private async evictModelIfIdle(): Promise<void> {
+		if (!this.loadedModelId) {
+			this.clearInactivityTimer();
+			return;
+		}
+
+		if (this.isGenerating || this.loadPromise) {
+			this.lastModelActivityAt = Date.now();
+			this.scheduleInactivityEviction();
+			return;
+		}
+
+		const lastActivityAt = this.lastModelActivityAt ?? Date.now();
+		if (Date.now() - lastActivityAt < MODEL_IDLE_EVICTION_MS) {
+			this.scheduleInactivityEviction();
+			return;
+		}
+
+		await this.evictLoadedModel({ purgeDownloads: true });
+	}
+
+	private async evictLoadedModel(options: { purgeDownloads: boolean }): Promise<void> {
+		const modelId = this.loadedModelId;
+		if (!modelId) {
+			return;
+		}
+
+		if (this.activeEviction) {
+			return this.activeEviction;
+		}
+
+		const eviction = (async () => {
+			this.clearInactivityTimer();
+
+			try {
+				await this.backend?.unload();
+			} finally {
+				this.loadedModelId = null;
+				this.lastModelActivityAt = null;
+				modelStateStore.setRuntimeInfo(null);
+				await modelStateStore.setLoadState('idle');
+				await this.syncLoadedModelStatus(null);
+
+				if (options.purgeDownloads) {
+					await purgeCachedModelArtifactsForModelId(modelId);
+				}
+
+				clearPendingModelCachePurge();
+			}
+		})();
+
+		this.activeEviction = eviction;
+
+		try {
+			await eviction;
+		} finally {
+			if (this.activeEviction === eviction) {
+				this.activeEviction = null;
+			}
+		}
+	}
 
 	private snapshotUploadedFiles(files: ChatUploadedFile[]): ChatUploadedFile[] {
 		return files.map((file) => ({ ...file }));
@@ -393,10 +561,13 @@ class ChatStore {
 				});
 
 				this.loadedModelId = model.id;
+				this.noteModelActivity();
 				modelStateStore.setRuntimeInfo(backend.getRuntimeInfo());
 				await modelStateStore.setLoadState('ready');
+				await this.syncLoadedModelStatus(model.id);
 			} catch (error) {
 				this.loadedModelId = null;
+				this.clearInactivityTimer();
 				modelStateStore.setRuntimeInfo(null);
 				const message =
 					error instanceof Error
@@ -425,10 +596,7 @@ class ChatStore {
 	async unloadModel(modelId: string): Promise<void> {
 		if (this.loadedModelId !== modelId) return;
 
-		await this.backend?.unload();
-		this.loadedModelId = null;
-		modelStateStore.setRuntimeInfo(null);
-		await modelStateStore.setLoadState('idle');
+		await this.evictLoadedModel({ purgeDownloads: false });
 	}
 
 	private async persistAgenticToolCall(
@@ -1069,13 +1237,14 @@ class ChatStore {
 				};
 				await modelStateStore.setLoadState('error', message);
 			}
-		} finally {
-			cancelScheduledFlush();
-			this.abortController = null;
-			this.isGenerating = false;
-			this.markChatLoading(conversationId, false);
+			} finally {
+				cancelScheduledFlush();
+				this.abortController = null;
+				this.isGenerating = false;
+				this.markChatLoading(conversationId, false);
+				this.noteModelActivity();
+			}
 		}
-	}
 
 	async sendPrompt(prompt: string): Promise<void> {
 		await this.sendMessage(prompt);

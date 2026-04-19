@@ -40,7 +40,7 @@
 		window.addEventListener('error', handleWindowError);
 
 		try {
-			status = `Loading ${model.id}...`;
+				status = `Loading ${model.id}`;
 			lastError = null;
 
 			await backend.load(model, {

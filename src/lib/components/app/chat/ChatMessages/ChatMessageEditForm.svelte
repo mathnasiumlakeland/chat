@@ -99,7 +99,6 @@
 		attachments={editCtx.editedExtras}
 		uploadedFiles={editCtx.editedUploadedFiles}
 		placeholder="Edit your message..."
-		showMcpPromptButton
 		onValueChange={editCtx.setContent}
 		onAttachmentRemove={handleAttachmentRemove}
 		onUploadedFileRemove={handleUploadedFileRemove}

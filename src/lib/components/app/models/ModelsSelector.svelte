@@ -12,17 +12,15 @@
 		selectedModelId,
 		singleModelName
 	} from '$lib/stores/models.svelte';
-	import { KeyboardKey } from '$lib/enums';
 	import { isRouterMode } from '$lib/stores/server.svelte';
 	import {
 		DialogModelInformation,
-		DropdownMenuSearchable,
 		ModelId,
 		ModelsSelectorList,
 		ModelsSelectorOption
 	} from '$lib/components/app';
 	import type { ModelOption } from '$lib/types/models';
-	import { filterModelOptions, groupModelOptions, type ModelItem } from './utils';
+	import { groupModelOptions, type ModelItem } from './utils';
 
 	interface Props {
 		class?: string;
@@ -71,17 +69,8 @@
 
 	let isLoadingModel = $state(false);
 
-	let searchTerm = $state('');
 	let highlightedIndex = $state<number>(-1);
-
-	let filteredOptions = $derived(filterModelOptions(options, searchTerm));
-
-	let groupedFilteredOptions = $derived(groupModelOptions(filteredOptions, (m) => modelsStore.isModelLoaded(m)));
-
-	$effect(() => {
-		void searchTerm;
-		highlightedIndex = -1;
-	});
+	let groupedOptions = $derived(groupModelOptions(options, (m) => modelsStore.isModelLoaded(m)));
 
 	let isOpen = $state(false);
 	let showModelDialog = $state(false);
@@ -104,7 +93,6 @@
 		if (isRouter) {
 			if (open) {
 				isOpen = true;
-				searchTerm = '';
 				highlightedIndex = -1;
 
 				modelsStore.fetchRouterModels().then(() => {
@@ -112,7 +100,6 @@
 				});
 			} else {
 				isOpen = false;
-				searchTerm = '';
 				highlightedIndex = -1;
 			}
 		} else {
@@ -122,42 +109,6 @@
 
 	export function open() {
 		handleOpenChange(true);
-	}
-
-	function handleSearchKeyDown(event: KeyboardEvent) {
-		if (event.isComposing) return;
-
-		if (event.key === KeyboardKey.ARROW_DOWN) {
-			event.preventDefault();
-
-			if (filteredOptions.length === 0) return;
-
-			if (highlightedIndex === -1 || highlightedIndex === filteredOptions.length - 1) {
-				highlightedIndex = 0;
-			} else {
-				highlightedIndex += 1;
-			}
-		} else if (event.key === KeyboardKey.ARROW_UP) {
-			event.preventDefault();
-
-			if (filteredOptions.length === 0) return;
-
-			if (highlightedIndex === -1 || highlightedIndex === 0) {
-				highlightedIndex = filteredOptions.length - 1;
-			} else {
-				highlightedIndex -= 1;
-			}
-		} else if (event.key === KeyboardKey.ENTER) {
-			event.preventDefault();
-
-			if (highlightedIndex >= 0 && highlightedIndex < filteredOptions.length) {
-				const option = filteredOptions[highlightedIndex];
-
-				handleSelect(option.id);
-			} else if (filteredOptions.length > 0) {
-				highlightedIndex = 0;
-			}
-		}
 	}
 
 	async function handleSelect(modelId: string) {
@@ -244,7 +195,7 @@
 		<div class="flex items-center gap-2 text-xs text-muted-foreground">
 			<Loader2 class="h-3.5 w-3.5 animate-spin" />
 
-			Loading models…
+				Loading models
 		</div>
 	{:else if options.length === 0 && isRouter}
 		{#if currentModel}
@@ -314,69 +265,57 @@
 
 				<DropdownMenu.Content
 					align="end"
-					class="w-full max-w-[100vw] pt-0 sm:w-max sm:max-w-[calc(100vw-2rem)]"
+					class="w-full max-w-[100vw] sm:w-max sm:max-w-[calc(100vw-2rem)]"
 				>
-					<DropdownMenuSearchable
-						bind:searchValue={searchTerm}
-						placeholder="Search models..."
-						onSearchKeyDown={handleSearchKeyDown}
-						emptyMessage="No models found."
-						isEmpty={filteredOptions.length === 0 && isCurrentModelInCache}
-					>
-						<div class="models-list">
-							{#if !isCurrentModelInCache && currentModel}
-								<!-- Show unavailable model as first option (disabled) -->
-								<button
-									type="button"
-									class="flex w-full cursor-not-allowed items-center bg-red-400/10 p-2 text-left text-sm text-red-400"
-									role="option"
-									aria-selected="true"
-									aria-disabled="true"
-									disabled
-								>
-									<ModelId modelId={currentModel} class="flex-1" showOrgName />
+					<div class="models-list">
+						{#if !isCurrentModelInCache && currentModel}
+							<!-- Show unavailable model as first option (disabled) -->
+							<button
+								type="button"
+								class="flex w-full cursor-not-allowed items-center bg-red-400/10 p-2 text-left text-sm text-red-400"
+								role="option"
+								aria-selected="true"
+								aria-disabled="true"
+								disabled
+							>
+								<ModelId modelId={currentModel} class="flex-1" showOrgName />
 
-									<span class="ml-2 text-xs whitespace-nowrap opacity-70">(not available)</span>
-								</button>
-							{/if}
+								<span class="ml-2 text-xs whitespace-nowrap opacity-70">(not available)</span>
+							</button>
+						{/if}
 
-							{#if filteredOptions.length === 0}
-								<p class="px-4 py-3 text-sm text-muted-foreground">No models found.</p>
-							{/if}
+						{#snippet modelOption(item: ModelItem, showOrgName: boolean)}
+							{@const { option, flatIndex } = item}
+							{@const isSelected = currentModel === option.model || activeId === option.id}
+							{@const isHighlighted = flatIndex === highlightedIndex}
 
-							{#snippet modelOption(item: ModelItem, showOrgName: boolean)}
-								{@const { option, flatIndex } = item}
-								{@const isSelected = currentModel === option.model || activeId === option.id}
-								{@const isHighlighted = flatIndex === highlightedIndex}
-
-								<ModelsSelectorOption
-									{option}
-									{isSelected}
-									{isHighlighted}
-									{showOrgName}
-									onSelect={handleSelect}
-									onInfoClick={handleInfoClick}
-									onMouseEnter={() => (highlightedIndex = flatIndex)}
-									onKeyDown={(e) => {
-										if (e.key === KeyboardKey.ENTER || e.key === KeyboardKey.SPACE) {
-											e.preventDefault();
-											handleSelect(option.id);
-										}
-									}}
-								/>
-							{/snippet}
-
-							<ModelsSelectorList
-								groups={groupedFilteredOptions}
-								{currentModel}
-								{activeId}
-								sectionHeaderClass="my-1.5 px-2 py-2 text-[13px] font-semibold text-muted-foreground/70 select-none"
+							<ModelsSelectorOption
+								{option}
+								{isSelected}
+								{isHighlighted}
+								{showOrgName}
 								onSelect={handleSelect}
 								onInfoClick={handleInfoClick}
-								renderOption={modelOption}
+								onMouseEnter={() => (highlightedIndex = flatIndex)}
+								onKeyDown={(event) => {
+									if (event.key === 'Enter' || event.key === ' ') {
+										event.preventDefault();
+										handleSelect(option.id);
+									}
+								}}
 							/>
-						</div>
-					</DropdownMenuSearchable>
+						{/snippet}
+
+						<ModelsSelectorList
+							groups={groupedOptions}
+							{currentModel}
+							{activeId}
+							sectionHeaderClass="my-1.5 px-2 py-2 text-[13px] font-semibold text-muted-foreground/70 select-none"
+							onSelect={handleSelect}
+							onInfoClick={handleInfoClick}
+							renderOption={modelOption}
+						/>
+					</div>
 				</DropdownMenu.Content>
 			</DropdownMenu.Root>
 		{:else}

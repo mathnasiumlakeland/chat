@@ -2,8 +2,6 @@
 	import { Square } from '@lucide/svelte';
 	import { Button } from '$lib/components/ui/button';
 	import {
-		ChatFormActionAttachmentsDropdown,
-		ChatFormActionAttachmentsSheet,
 		ChatFormActionRecord,
 		ChatFormActionSubmit,
 		McpServersSelector,
@@ -11,7 +9,6 @@
 		ModelsSelectorSheet
 	} from '$lib/components/app';
 	import { SETTINGS_SECTION_TITLES } from '$lib/constants';
-	import { mcpStore } from '$lib/stores/mcp.svelte';
 	import { getChatSettingsDialogContext } from '$lib/contexts';
 	import { FileTypeCategory } from '$lib/enums';
 	import { getFileTypeCategory } from '$lib/utils';
@@ -19,7 +16,7 @@
 	import { modelsStore, modelOptions, selectedModelId } from '$lib/stores/models.svelte';
 	import { isRouterMode, serverError } from '$lib/stores/server.svelte';
 	import { chatStore } from '$lib/stores/chat.svelte';
-	import { activeMessages, conversationsStore } from '$lib/stores/conversations.svelte';
+	import { activeMessages } from '$lib/stores/conversations.svelte';
 	import { IsMobile } from '$lib/hooks/is-mobile.svelte';
 	import { resolveChatFormModelSelection } from '../chat-form-actions-model-sync';
 
@@ -31,12 +28,8 @@
 		isRecording?: boolean;
 		hasText?: boolean;
 		uploadedFiles?: ChatUploadedFile[];
-		onFileUpload?: () => void;
 		onMicClick?: () => void;
 		onStop?: () => void;
-		onSystemPromptClick?: () => void;
-		onMcpPromptClick?: () => void;
-		onMcpResourcesClick?: () => void;
 	}
 
 	let {
@@ -47,12 +40,8 @@
 		isRecording = false,
 		hasText = false,
 		uploadedFiles = [],
-		onFileUpload,
 		onMicClick,
-		onStop,
-		onSystemPromptClick,
-		onMcpPromptClick,
-		onMcpResourcesClick
+		onStop
 	}: Props = $props();
 
 	let currentConfig = $derived(config());
@@ -124,16 +113,6 @@
 		return false;
 	});
 
-	let hasVisionModality = $derived.by(() => {
-		if (activeModelId) {
-			void modelPropsVersion;
-
-			return modelsStore.modelSupportsVision(activeModelId);
-		}
-
-		return false;
-	});
-
 	let hasAudioAttachments = $derived(
 		uploadedFiles.some((file) => getFileTypeCategory(file.type) === FileTypeCategory.AUDIO)
 	);
@@ -177,50 +156,10 @@
 	}
 
 	const chatSettingsDialog = getChatSettingsDialogContext();
-
-	let hasMcpPromptsSupport = $derived.by(() => {
-		const perChatOverrides = conversationsStore.getAllMcpServerOverrides();
-
-		return mcpStore.hasPromptsCapability(perChatOverrides);
-	});
-
-	let hasMcpResourcesSupport = $derived.by(() => {
-		const perChatOverrides = conversationsStore.getAllMcpServerOverrides();
-
-		return mcpStore.hasResourcesCapability(perChatOverrides);
-	});
 </script>
 
 <div class="flex w-full items-center gap-3 {className}" style="container-type: inline-size">
 	<div class="mr-auto flex items-center gap-2">
-		{#if isMobile.current}
-			<ChatFormActionAttachmentsSheet
-				{disabled}
-				{hasAudioModality}
-				{hasVisionModality}
-				{hasMcpPromptsSupport}
-				{hasMcpResourcesSupport}
-				{onFileUpload}
-				{onSystemPromptClick}
-				{onMcpPromptClick}
-				{onMcpResourcesClick}
-				onMcpSettingsClick={() => chatSettingsDialog.open(SETTINGS_SECTION_TITLES.MCP)}
-			/>
-		{:else}
-			<ChatFormActionAttachmentsDropdown
-				{disabled}
-				{hasAudioModality}
-				{hasVisionModality}
-				{hasMcpPromptsSupport}
-				{hasMcpResourcesSupport}
-				{onFileUpload}
-				{onSystemPromptClick}
-				{onMcpPromptClick}
-				{onMcpResourcesClick}
-				onMcpSettingsClick={() => chatSettingsDialog.open(SETTINGS_SECTION_TITLES.MCP)}
-			/>
-		{/if}
-
 		<McpServersSelector
 			{disabled}
 			onSettingsClick={() => chatSettingsDialog.open(SETTINGS_SECTION_TITLES.MCP)}

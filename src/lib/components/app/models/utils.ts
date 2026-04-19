@@ -16,28 +16,15 @@ export interface GroupedModelOptions {
 	available: OrgGroup[];
 }
 
-export function filterModelOptions(options: ModelOption[], searchTerm: string): ModelOption[] {
-	const term = searchTerm.trim().toLowerCase();
-	if (!term) return options;
-
-	return options.filter(
-		(option) =>
-			option.model.toLowerCase().includes(term) ||
-			option.name?.toLowerCase().includes(term) ||
-			option.aliases?.some((alias: string) => alias.toLowerCase().includes(term)) ||
-			option.tags?.some((tag: string) => tag.toLowerCase().includes(term))
-	);
-}
-
 export function groupModelOptions(
-	filteredOptions: ModelOption[],
+	options: ModelOption[],
 	isModelLoaded: (model: string) => boolean
 ): GroupedModelOptions {
 	// Loaded models
 	const loaded: ModelItem[] = [];
-	for (let i = 0; i < filteredOptions.length; i++) {
-		if (isModelLoaded(filteredOptions[i].model)) {
-			loaded.push({ option: filteredOptions[i], flatIndex: i });
+	for (let i = 0; i < options.length; i++) {
+		if (isModelLoaded(options[i].model)) {
+			loaded.push({ option: options[i], flatIndex: i });
 		}
 	}
 
@@ -45,8 +32,8 @@ export function groupModelOptions(
 	// Available models grouped by org (excluding loaded models)
 	const available: OrgGroup[] = [];
 	const orgGroups = new SvelteMap<string, ModelItem[]>();
-	for (let i = 0; i < filteredOptions.length; i++) {
-		const option = filteredOptions[i];
+	for (let i = 0; i < options.length; i++) {
+		const option = options[i];
 		if (loadedModelIds.has(option.model)) continue;
 
 		const key = option.parsedId?.orgName ?? '';

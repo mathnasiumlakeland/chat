@@ -92,7 +92,7 @@
 		<div class="space-y-6 py-4">
 			{#if isLoadingModels || isLoadingRouterProps}
 				<div class="flex items-center justify-center py-8">
-					<div class="text-sm text-muted-foreground">Loading model information...</div>
+						<div class="text-sm text-muted-foreground">Loading model information</div>
 				</div>
 			{:else if firstModel}
 				{@const modelMeta = firstModel.meta}

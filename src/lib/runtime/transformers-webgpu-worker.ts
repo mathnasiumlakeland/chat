@@ -133,7 +133,7 @@ async function load(message: WorkerLoadMessage): Promise<void> {
 	postMessage({
 		requestId,
 		status: 'loading',
-		data: 'Loading model...'
+			data: 'Loading model'
 	});
 
 	const generator = await createGenerator(modelKey, (info) => {

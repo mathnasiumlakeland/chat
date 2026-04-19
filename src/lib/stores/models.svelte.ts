@@ -95,6 +95,18 @@ class ModelsStore {
 			.map(([id]) => id);
 	}
 
+	syncLoadedModelStatus(loadedModelId: string | null): void {
+		this.routerModels = this.routerModels.map((model) => ({
+			...model,
+			status: {
+				value:
+					loadedModelId && model.id === loadedModelId
+						? ServerModelStatus.LOADED
+						: ServerModelStatus.UNLOADED
+			}
+		}));
+	}
+
 	get singleModelName(): string | null {
 		return this.selectedModelName;
 	}
@@ -251,22 +263,13 @@ class ModelsStore {
 		this.modelLoadingStates.set(normalizedModelId, true);
 		this.setRouterStatus(normalizedModelId, ServerModelStatus.LOADING);
 
-		try {
-			await this.selectModelById(normalizedModelId);
-			await chatStore.ensureLoaded();
-
-			this.routerModels = this.routerModels.map((model) => ({
-				...model,
-				status: {
-					value:
-						model.id === normalizedModelId
-							? ServerModelStatus.LOADED
-							: ServerModelStatus.UNLOADED
-				}
-			}));
-		} finally {
-			this.modelLoadingStates.delete(normalizedModelId);
-		}
+			try {
+				await this.selectModelById(normalizedModelId);
+				await chatStore.ensureLoaded();
+				this.syncLoadedModelStatus(normalizedModelId);
+			} finally {
+				this.modelLoadingStates.delete(normalizedModelId);
+			}
 	}
 
 	async unloadModel(modelId: string): Promise<void> {
