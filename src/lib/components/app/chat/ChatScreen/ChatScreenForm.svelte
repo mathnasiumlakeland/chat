@@ -112,9 +112,7 @@
 	});
 
 	let modelLoadingProgressWidth = $derived(
-		showModelLoadingState
-			? `${clampedModelLoadingProgress > 0 ? clampedModelLoadingProgress : 8}%`
-			: '0%'
+		showModelLoadingState ? `${clampedModelLoadingProgress}%` : '0%'
 	);
 
 	let modelLoadingStatus = $derived.by(() => {
@@ -126,7 +124,7 @@
 			return `${clampedModelLoadingProgress}%`;
 		}
 
-		return 'Starting...';
+		return '0%';
 	});
 </script>
 
